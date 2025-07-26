@@ -5,6 +5,8 @@
 #include "ggml-backend-impl.h"
 #include "framework.h"
 
+#include <utility>
+
 #ifdef __GNUC__
 #ifdef __MINGW32__
 #define PARAKEET_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
@@ -100,14 +102,16 @@ namespace ggml_runtime
     BackendManager& BackendManager::get_instance(Params params)
     {
         static BackendManager* instance = nullptr;
-        if (!instance) {
+        static std::once_flag flag;
+        std::call_once(flag, [&]() {
             try {
                 instance = new BackendManager(params);
+                instance->init_backends();
             } catch (const std::exception& e) {
                 PARAKEET_LOG_ERROR("Failed to create BackendManager instance: %s\n", e.what());
                 throw;
             }
-        }
+        });
         return *instance;
     }
 
@@ -223,15 +227,6 @@ namespace ggml_runtime
         return buft_list;
     }
 
-    int Session::init_runtime()
-    {
-        auto bm = BackendManager::get_instance(params);
-        bm.init_backends();
-        buft_list = bm.get_buft_list();
-        backends = bm.get_backends();
-        return 0;
-    }
-
     ggml_context* Session::get_ctx_of_buffer_type(ggml_backend_buffer_type_t buft)
     {
         auto it = ctx_map.find(buft);
@@ -298,14 +293,39 @@ namespace ggml_runtime
         return t;
     }
 
-    void Session::init_schedule(TensorBag input_tensors, TensorBag output_tensors)
+    void Session::init_schedule(TensorBag input_tensors)
     {
         auto & sched = this->sched;
         auto & meta = sched_meta;
 
-        sched = ggml_backend_sched_new(backends.data(), nullptr, backends.size(), root_module->tensor_count(), false);
-        meta.resize(ggml_tensor_overhead() * (root_module->tensor_count() + input_tensors.tensor_count() + output_tensors.tensor_count()) + ggml_graph_overhead());
+        auto n_tensors = root_module->tensor_count() + input_tensors.tensor_count() + output_tensors.tensor_count();
+        sched = ggml_backend_sched_new(backends.data(), nullptr, backends.size(), n_tensors, false);
+        meta.resize(ggml_tensor_overhead() * n_tensors + ggml_graph_overhead());
 
+        build_graph(input_tensors);
+
+        // allocate graph in the backend
+        if (!ggml_backend_sched_alloc_graph(sched, gf)) {
+            // should never happen as we pre-allocate the memory
+            PARAKEET_LOG_ERROR("Failed to allocate graph\n");
+            throw std::runtime_error("failed to allocate graph");
+        }
+
+        ggml_backend_sched_reset(sched);
+
+        /*
+        if (!ggml_graph_compute_helper(sched, gf, 1))
+        {
+            PARAKEET_LOG_ERROR("Failed to compute graph\n");
+            throw std::runtime_error("failed to compute graph");
+        }
+        */
+
+    }
+
+    void Session::build_graph(TensorBag input_tensors)
+    {
+        auto & meta = sched_meta;
         struct ggml_init_params params = {
             /*.mem_size   =*/ meta.size(),
             /*.mem_buffer =*/ meta.data(),
@@ -313,7 +333,7 @@ namespace ggml_runtime
         };
 
         struct ggml_context * ctx = ggml_init(params);
-        ggml_cgraph * gf = ggml_new_graph(ctx);
+        gf = ggml_new_graph(ctx);
 
         for (size_t i = 0; i < input_tensors.tensor_count(); ++i)
         {
@@ -330,6 +350,12 @@ namespace ggml_runtime
 
         ggml_free(ctx);
         // end of builiding graph
+    }
+
+
+    void Session::run_schedule(TensorBag input_tensors)
+    {
+        build_graph(input_tensors);
 
         // allocate graph in the backend
         if (!ggml_backend_sched_alloc_graph(sched, gf)) {
@@ -344,17 +370,19 @@ namespace ggml_runtime
             throw std::runtime_error("failed to compute graph");
         }
 
-
+        // reset the scheduler for the next run
+        ggml_backend_sched_reset(sched);
     }
 
 
-    void Session::run(
-                std::function<TensorBag(Session*)> define_input_tensors,
-                std::function<void(Session*)> set_input_data,
-                std::function<void(Session*, TensorBag)> return_output
-                )
+    int Session::setup(std::function<TensorBag(Session*)> define_input_tensors)
     {
-        auto input_tensors = define_input_tensors(this);
+        auto bm = BackendManager::get_instance(params);
+        buft_list = bm.get_buft_list();
+        backends = bm.get_backends();
+
+        // define tensors in this session
+        auto input_tensors = init_input(std::move(define_input_tensors));
         root_module->define_tensors(this);
         // allocate tensors in the backend buffers
         for (auto & p : ctx_map) {
@@ -368,11 +396,65 @@ namespace ggml_runtime
                 PARAKEET_LOG_INFO("%12s total size = %8.2f MB\n", ggml_backend_buffer_name(buf), size_main / 1e6);
             }
         }
+        //output_tensors = root_module->build_graph(this, input_tensors);
+        init_schedule(input_tensors);
+        ggml_free(input_ctx);
+        if (input_buffer)
+        {
+            ggml_backend_buffer_free(input_buffer);
+        }
+        return 0;
+    }
+
+    TensorBag Session::init_input(std::function<TensorBag(Session*)> define_input_tensors)
+    {
+        /// when we count the number of tensors, root_module->tensor_count() should
+        /// contain the number of tensors of weights and biases, and also including
+        /// intermediate tensors. You should define the number in module class.
+        auto n_tensors = root_module->tensor_count() + 64;
+        ggml_init_params params = {
+            /*.mem_size   =*/ n_tensors * ggml_tensor_overhead(),
+            /*.mem_buffer =*/ nullptr,
+            /*.no_alloc   =*/ true,
+        };
+
+        input_ctx = ggml_init(params);
+        if (!input_ctx) {
+            throw std::runtime_error("failed to create ggml context for input");
+        }
+
+        auto input_tensors = define_input_tensors(this);
+
+        ggml_backend_buffer_type_t cpu_buft = buft_list.back().second;
+        input_buffer = ggml_backend_alloc_ctx_tensors_from_buft(input_ctx, cpu_buft);
+        if (input_buffer)
+        {
+            size_t size_main = ggml_backend_buffer_get_size(input_buffer);
+            PARAKEET_LOG_INFO("%12s total size = %8.2f MB\n", ggml_backend_buffer_name(input_buffer), size_main / 1e6);
+        }
+        return input_tensors;
+    }
+
+    void Session::run(
+                std::function<TensorBag(Session*)> define_input_tensors,
+                std::function<void(Session*)> set_input_data,
+                std::function<void(Session*, TensorBag)> return_output
+                )
+    {
+        printf("running session\n");
+        auto input_tensors = init_input(std::move(define_input_tensors));
+        printf("input tensors defined\n");
         set_input_data(this);
+        printf("input data set\n");
+        output_tensors = root_module->build_graph(this, input_tensors);
         root_module->set_data(this);
-        auto output_tensors = root_module->build_graph(this, input_tensors);
-        init_schedule(input_tensors, output_tensors);
+        printf("data set\n");
+        run_schedule(input_tensors);
         return_output(this, output_tensors);
+
+        // free input context
+        ggml_free(input_ctx);
+        ggml_backend_buffer_free(input_buffer);
     }
 
     ModelLoader::ModelLoader(std::string model_path)

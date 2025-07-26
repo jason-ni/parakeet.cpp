@@ -110,24 +110,28 @@ namespace ggml_runtime
             explicit Session(Params params, Module* module);
             ~Session() = default;
 
-            int init_runtime();
+            int setup(std::function<TensorBag(Session*)> define_input_tensors);
 
             // session run expect one closure function that takes a ggml_context* and returns a TensorBag,
             // and another closure function that takes a ggml_context* and a TensorBag and returns void.
             // The first closure function is used to build the input tensorbag, and the second closure function is used
             // to return the output in any way you want.
             void run(
-                std::function<TensorBag(Session*)> build_input_tensors,
+                std::function<TensorBag(Session*)> define_input_tensors,
                 std::function<void(Session*)> set_input_data,
                 std::function<void(Session*, TensorBag)> return_output
                 );
 
-
             ggml_context* get_cpu_ctx();
             ggml_context* get_gpu_ctx();
 
+            ggml_context* input_ctx;
+
         private:
-            void init_schedule(TensorBag input_tensors, TensorBag output_tensors);
+            void init_schedule(TensorBag input_tensors);
+            TensorBag init_input(std::function<TensorBag(Session*)> define_input_tensors);
+            void build_graph(TensorBag input_tensors);
+            void run_schedule(TensorBag input_tensors);
 
             Params params;
             Module* root_module;
@@ -137,8 +141,11 @@ namespace ggml_runtime
             std::vector<ggml_backend_t> backends;
             ggml_context* get_ctx_of_buffer_type(ggml_backend_buffer_type_t buffer_type);
             std::vector<ggml_backend_buffer_t> backend_buffers; // used to free the buffers when the session is destroyed.
+            ggml_backend_buffer_t input_buffer;
             ggml_backend_sched_t sched;
             std::vector<uint8_t> sched_meta;
+            ggml_cgraph * gf;
+            TensorBag output_tensors;
     };
 
     class ModelLoader
