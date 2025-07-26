@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cassert>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,9 +14,12 @@
 #include "ggml-cpp.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
+#include "framework_def.h"
 
 namespace ggml_runtime
 {
+    using buft_list_t = std::vector<std::pair<ggml_backend_dev_t, ggml_backend_buffer_type_t>>;
+    using buft_ctx_map_t = std::map<ggml_backend_buffer_type_t, ggml_context*>;
 
     class TensorBag
     {
@@ -35,6 +39,7 @@ namespace ggml_runtime
     };
 
     class Session;
+    class TensorContainer;
 
     class Module {
     public:
@@ -45,7 +50,7 @@ namespace ggml_runtime
         virtual void define_tensors(Session* session) = 0;
 
         // Builds the computation graph for this module.
-        virtual TensorBag build_graph(Session* session, TensorBag input_tensors) = 0;
+        virtual TensorBag build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container) = 0;
 
         // Sets the data for the module's tensors.
         virtual void set_data(Session* session) = 0;
@@ -61,7 +66,7 @@ namespace ggml_runtime
 
         void define_tensors(Session* session) override;
 
-        TensorBag build_graph(Session* session, TensorBag input_tensors) override;
+        TensorBag build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container) override;
 
         void set_data(Session* session) override;
 
@@ -83,9 +88,6 @@ namespace ggml_runtime
         int gpu_device_idx = 0;
     };
 
-    using buft_list_t = std::vector<std::pair<ggml_backend_dev_t, ggml_backend_buffer_type_t>>;
-    using buft_ctx_map_t = std::map<ggml_backend_buffer_type_t, ggml_context*>;
-
     class BackendManager
     {
         public:
@@ -103,6 +105,46 @@ namespace ggml_runtime
             buft_list_t buft_list;
     };
 
+    class TensorContainer
+    {
+    public:
+        explicit TensorContainer(buft_list_t buft_list, size_t max_n_tensors);
+        ~TensorContainer()
+        {
+            for (auto & p : ctx_map)
+            {
+                ggml_free(p.second);
+            }
+            for (auto & b : backend_buffers)
+            {
+                if (b)
+                {
+                    ggml_backend_buffer_free(b);
+                }
+            }
+        }
+
+        ggml_context* get_temp_ctx();
+        ggml_context* get_ctx_of_buffer_type(ggml_backend_buffer_type_t buft);
+        void allocate_tensors_on_backend_buffers();
+        void free_temp_ctx();
+        ggml_tensor* get_tensor_by_name(const std::string& name);
+
+        ggml_tensor* create_tensor_1d(
+            std::string name,
+            ggmlf_tensor tensor_type,
+            enum ggml_type data_type,
+            int64_t ne0);
+
+    private:
+        size_t max_n_tensors;
+        ggml_context* temp_ctx;
+        buft_list_t buft_list;
+        buft_ctx_map_t ctx_map;
+        std::vector<ggml_backend_buffer_t> backend_buffers; // used to free the buffers when the tensor container is destroyed.
+        std::map<std::string, ggml_tensor*> tensor_lookup;
+    };
+
 
     class Session
     {
@@ -110,15 +152,15 @@ namespace ggml_runtime
             explicit Session(Params params, Module* module);
             ~Session() = default;
 
-            int setup(std::function<TensorBag(Session*)> define_input_tensors);
+            int setup();
 
             // session run expect one closure function that takes a ggml_context* and returns a TensorBag,
             // and another closure function that takes a ggml_context* and a TensorBag and returns void.
             // The first closure function is used to build the input tensorbag, and the second closure function is used
             // to return the output in any way you want.
             void run(
-                std::function<TensorBag(Session*)> define_input_tensors,
-                std::function<void(Session*)> set_input_data,
+                std::function<TensorBag(Session*, TensorContainer*)> define_input_tensors,
+                std::function<void(Session*, TensorContainer*)> set_input_data,
                 std::function<void(Session*, TensorBag)> return_output
                 );
 
@@ -126,22 +168,19 @@ namespace ggml_runtime
             ggml_context* get_gpu_ctx();
 
             ggml_context* input_ctx;
+            std::unique_ptr<TensorContainer> model_tensor_container;
 
         private:
-            void init_schedule(TensorBag input_tensors);
-            TensorBag init_input(std::function<TensorBag(Session*)> define_input_tensors);
+            void init_schedule();
             void build_graph(TensorBag input_tensors);
             void run_schedule(TensorBag input_tensors);
 
             Params params;
             Module* root_module;
             size_t n_tensors;
-            buft_ctx_map_t ctx_map;
             buft_list_t buft_list;
             std::vector<ggml_backend_t> backends;
-            ggml_context* get_ctx_of_buffer_type(ggml_backend_buffer_type_t buffer_type);
-            std::vector<ggml_backend_buffer_t> backend_buffers; // used to free the buffers when the session is destroyed.
-            ggml_backend_buffer_t input_buffer;
+
             ggml_backend_sched_t sched;
             std::vector<uint8_t> sched_meta;
             ggml_cgraph * gf;

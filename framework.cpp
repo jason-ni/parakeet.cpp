@@ -72,8 +72,163 @@ static void parakeet_log_internal(
     va_end(args);
 }
 
+static std::string format(const char * fmt, ...) {
+    va_list ap;
+    va_list ap2;
+    va_start(ap, fmt);
+    va_copy(ap2, ap);
+    int size = vsnprintf(NULL, 0, fmt, ap);
+    GGML_ASSERT(size >= 0 && size < INT_MAX); // NOLINT
+    std::vector<char> buf(size + 1);
+    int size2 = vsnprintf(buf.data(), size + 1, fmt, ap2);
+    GGML_ASSERT(size2 == size);
+    va_end(ap2);
+    va_end(ap);
+    return std::string(buf.data(), size);
+}
+
 namespace ggml_runtime
 {
+    // checks if the weight tensor can be used with the specified buffer type and device
+    static bool weight_buft_supported(ggml_tensor * w, ggml_op op, ggml_backend_buffer_type_t buft, ggml_backend_dev_t dev) {
+        GGML_ASSERT(w != nullptr);
+
+        if (op == GGML_OP_NONE) {
+            return true;
+        }
+
+        ggml_init_params params = {
+            /*.mem_size   =*/ ggml_tensor_overhead()*8,
+            /*.mem_buffer =*/ NULL,
+            /*.no_alloc   =*/ true,
+        };
+        ggml_context_ptr ctx_ptr { ggml_init(params) };
+        if (!ctx_ptr) {
+            throw std::runtime_error("failed to create ggml context");
+        }
+        ggml_context * ctx = ctx_ptr.get();
+
+        ggml_tensor * op_tensor = nullptr;
+
+        switch (op) {
+            case GGML_OP_GET_ROWS:
+                {
+                    ggml_tensor * b = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 512);
+                    op_tensor = ggml_get_rows(ctx, w, b);
+                } break;
+            case GGML_OP_MUL_MAT:
+                {
+                    ggml_tensor * b = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, w->ne[0], 512, w->ne[2], w->ne[3]);
+                    op_tensor = ggml_mul_mat(ctx, w, b);
+                } break;
+            /* TODO: don't know how hparams is used here
+            case GGML_OP_MUL_MAT_ID:
+                {
+                    int n_expert_used = hparams.n_expert_used;
+                    ggml_tensor * b = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, w->ne[0], n_expert_used, 512);
+                    ggml_tensor * ids = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, n_expert_used, 512);
+                    op_tensor = ggml_mul_mat_id(ctx, w, b, ids);
+                } break;
+            */
+            case GGML_OP_ADD:
+                {
+                    ggml_tensor * a = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, w->ne[0], w->ne[1], w->ne[2], w->ne[3]);
+                    op_tensor = ggml_add(ctx, a, w);
+                } break;
+            case GGML_OP_MUL:
+                {
+                    ggml_tensor * a = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, w->ne[0], w->ne[1], w->ne[2], w->ne[3]);
+                    op_tensor = ggml_mul(ctx, a, w);
+                } break;
+            case GGML_OP_DIV:
+                {
+                    ggml_tensor * a = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, w->ne[0]);
+                    op_tensor = ggml_div(ctx, a, w);
+                } break;
+            /*
+            case GGML_OP_ROPE:
+                {
+                    int n_embd_head = hparams.n_embd_head_v;
+                    int n_head = hparams.n_head();
+                    ggml_tensor * a = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd_head, n_head, 512);
+                    ggml_tensor * b = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 512);
+                    op_tensor = ggml_rope_ext(
+                        ctx, a, b, w,
+                        0, 0, 0, 0, 0,
+                        0, 0, 0, 0
+                    );
+
+                } break;
+            */
+            case GGML_OP_SSM_CONV:
+                {
+                    // FIXME
+                    ggml_tensor * conv_x = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 12345, w->ne[1], 6789);
+                    op_tensor = ggml_ssm_conv(ctx, conv_x, w);
+                } break;
+            case GGML_OP_SSM_SCAN:
+                {
+                    // FIXME
+                    const int64_t d_state      = w->ne[0];
+                    const int64_t d_inner      = w->ne[1];
+                    const int64_t n_seq_tokens = 512;
+                    const int64_t n_seqs       = 1;
+                    ggml_tensor * s  = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_state, d_inner, n_seqs);
+                    ggml_tensor * x = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_inner, n_seq_tokens, n_seqs);
+                    ggml_tensor * dt = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_inner, n_seq_tokens, n_seqs);
+                    ggml_tensor * B = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_state, n_seq_tokens, n_seqs);
+                    ggml_tensor * C = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_state, n_seq_tokens, n_seqs);
+                    op_tensor = ggml_ssm_scan(ctx, s, x, dt, w, B, C);
+                } break;
+            case GGML_OP_RWKV_WKV6:
+                {
+                    // FIXME
+                    const int64_t S = 123;
+                    const int64_t H = 123;
+                    const int64_t n_tokens = 123;
+                    const int64_t n_seqs = 123;
+                    ggml_tensor  * k = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, S, 1, H, n_tokens);
+                    ggml_tensor  * v = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, S, H, n_tokens);
+                    ggml_tensor  * r = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, S, H, n_tokens);
+                    ggml_tensor  * tf = w;
+                    ggml_tensor  * td = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, S, H, n_tokens);
+                    ggml_tensor  * state = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, S, n_seqs, S, H);
+                    op_tensor = ggml_rwkv_wkv6(ctx, k, v, r, tf, td, state);
+                } break;
+            case GGML_OP_IM2COL:
+                {
+                    // FIXME: for general usage, how we supposed to set the im2col parameters?
+                    //const int n_embd = hparams.n_embd;
+                    ggml_tensor * b = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1024, w->ne[1], 1, 1);
+                    op_tensor = ggml_im2col(ctx, w, b, 1, 0, 0, 0, 1, 0, false, GGML_TYPE_F16);
+                } break;
+            default:
+                GGML_ABORT("%s: missing test for op %s for tensor %s", __func__, ggml_op_name(op), w->name);
+        }
+
+        // create a temporary dummy buffer for the weight so that supports_op can check the buffer type
+        GGML_ASSERT(w->buffer == nullptr);
+        w->buffer = ggml_backend_buft_alloc_buffer(buft, 0);
+        bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor);
+        ggml_backend_buffer_free(w->buffer);
+        w->buffer = nullptr;
+
+        return op_supported;
+    }
+
+    // find the first buffer type in the list that can use the tensor
+    static ggml_backend_buffer_type_t select_weight_buft(ggml_tensor * tensor, ggml_op op, const buft_list_t & buft_list) {
+        GGML_ASSERT(!buft_list.empty());
+        for (const auto & cur : buft_list) {
+            ggml_backend_dev_t cur_dev = cur.first;
+            ggml_backend_buffer_type_t cur_buft = cur.second;
+            if (weight_buft_supported(tensor, op, cur_buft, cur_dev)) {
+                return cur_buft;
+            }
+        }
+        return nullptr;
+    }
+
     TensorBag::TensorBag()
     {
         tensors = std::vector<ggml_tensor*>();
@@ -227,23 +382,86 @@ namespace ggml_runtime
         return buft_list;
     }
 
-    ggml_context* Session::get_ctx_of_buffer_type(ggml_backend_buffer_type_t buft)
+    TensorContainer::TensorContainer(buft_list_t buft_list, size_t max_n_tensors)
+    {
+        this->buft_list = buft_list;
+        this->max_n_tensors = max_n_tensors;
+        this->temp_ctx = nullptr;
+    }
+
+    ggml_context* TensorContainer::get_temp_ctx()
+    {
+        if (temp_ctx == nullptr)
+        {
+            ggml_init_params params = {
+                /*.mem_size   =*/ max_n_tensors * ggml_tensor_overhead(),
+                /*.mem_buffer =*/ nullptr,
+                /*.no_alloc   =*/ true,
+            };
+
+            temp_ctx = ggml_init(params);
+            if (!temp_ctx) {
+                throw std::runtime_error(format("failed to create ggml context"));
+            }
+        }
+        return temp_ctx;
+    }
+
+    void TensorContainer::free_temp_ctx()
+    {
+        if (temp_ctx)
+        {
+            ggml_free(temp_ctx);
+            temp_ctx = nullptr;
+        }
+    }
+    ggml_tensor* TensorContainer::get_tensor_by_name(const std::string& name)
+    {
+        auto it = tensor_lookup.find(name);
+        if (it == tensor_lookup.end()) {
+            return nullptr;
+        }
+        return it->second;
+    }
+
+
+    ggml_tensor* TensorContainer::create_tensor_1d(
+        std::string name,
+        ggmlf_tensor tensor_type,
+        ggml_type data_type,
+        int64_t ne0)
+    {
+        ggml_op op = ggmlf_tensor_info_mapping.at(tensor_type);
+
+        ggml_tensor* meta = ggml_new_tensor_1d(get_temp_ctx(), data_type, ne0);
+
+        ggml_backend_buffer_type_t buft = select_weight_buft(meta, op, buft_list);
+        if (!buft) {
+            throw std::runtime_error(format(
+                "failed to find a compatible buffer type for tensor %s",
+                ggmlf_tensor_info_mapping.at(tensor_type)));
+        }
+
+        ggml_context * ctx = get_ctx_of_buffer_type(buft);
+        ggml_tensor * tensor = ggml_dup_tensor(ctx, meta);
+        ggml_set_name(tensor, name.c_str());
+        tensor_lookup.insert(std::make_pair(name, tensor));
+        return tensor;
+    }
+
+    ggml_context* TensorContainer::get_ctx_of_buffer_type(ggml_backend_buffer_type_t buft)
     {
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
-            if (n_tensors == 0)
-            {
-                n_tensors = root_module->tensor_count() + 64;
-            }
             ggml_init_params params = {
-                /*.mem_size   =*/ n_tensors * ggml_tensor_overhead(),
+                /*.mem_size   =*/ max_n_tensors * ggml_tensor_overhead(),
                 /*.mem_buffer =*/ nullptr,
                 /*.no_alloc   =*/ true,
             };
 
             ggml_context * ctx = ggml_init(params);
             if (!ctx) {
-                throw std::runtime_error("failed to create ggml context");
+                throw std::runtime_error(format("failed to create ggml context"));
             }
 
             ctx_map[buft] = ctx;
@@ -254,22 +472,25 @@ namespace ggml_runtime
         return it->second;
     }
 
+    void TensorContainer::allocate_tensors_on_backend_buffers()
+    {
+        for (auto & p : ctx_map) {
+            ggml_backend_buffer_type_t buft = p.first;
+            ggml_context * ctx = p.second;
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+            if (buf) {
+                backend_buffers.emplace_back(buf);
+
+                size_t size_main = ggml_backend_buffer_get_size(buf);
+                PARAKEET_LOG_INFO("%12s total size = %8.2f MB\n", ggml_backend_buffer_name(buf), size_main / 1e6);
+            }
+        }
+    }
+
     Session::Session(Params params, Module* module)
     {
         this->params = params;
         this->root_module = module;
-    }
-
-    ggml_context* Session::get_cpu_ctx()
-    {
-        auto cpu_buft = buft_list.back().second;
-        return get_ctx_of_buffer_type(cpu_buft);
-    }
-
-    ggml_context* Session::get_gpu_ctx()
-    {
-        auto gpu_buft = buft_list.begin()->second;
-        return get_ctx_of_buffer_type(gpu_buft);
     }
 
     static bool ggml_graph_compute_helper(
@@ -293,34 +514,14 @@ namespace ggml_runtime
         return t;
     }
 
-    void Session::init_schedule(TensorBag input_tensors)
+    void Session::init_schedule()
     {
         auto & sched = this->sched;
         auto & meta = sched_meta;
 
-        auto n_tensors = root_module->tensor_count() + input_tensors.tensor_count() + output_tensors.tensor_count();
+        auto n_tensors = root_module->tensor_count() + 64;
         sched = ggml_backend_sched_new(backends.data(), nullptr, backends.size(), n_tensors, false);
         meta.resize(ggml_tensor_overhead() * n_tensors + ggml_graph_overhead());
-
-        build_graph(input_tensors);
-
-        // allocate graph in the backend
-        if (!ggml_backend_sched_alloc_graph(sched, gf)) {
-            // should never happen as we pre-allocate the memory
-            PARAKEET_LOG_ERROR("Failed to allocate graph\n");
-            throw std::runtime_error("failed to allocate graph");
-        }
-
-        ggml_backend_sched_reset(sched);
-
-        /*
-        if (!ggml_graph_compute_helper(sched, gf, 1))
-        {
-            PARAKEET_LOG_ERROR("Failed to compute graph\n");
-            throw std::runtime_error("failed to compute graph");
-        }
-        */
-
     }
 
     void Session::build_graph(TensorBag input_tensors)
@@ -375,86 +576,42 @@ namespace ggml_runtime
     }
 
 
-    int Session::setup(std::function<TensorBag(Session*)> define_input_tensors)
+    int Session::setup()
     {
         auto bm = BackendManager::get_instance(params);
         buft_list = bm.get_buft_list();
         backends = bm.get_backends();
 
-        // define tensors in this session
-        auto input_tensors = init_input(std::move(define_input_tensors));
+        model_tensor_container = std::make_unique<TensorContainer>(buft_list, root_module->tensor_count());
         root_module->define_tensors(this);
-        // allocate tensors in the backend buffers
-        for (auto & p : ctx_map) {
-            ggml_backend_buffer_type_t buft = p.first;
-            ggml_context * ctx = p.second;
-            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
-            if (buf) {
-                backend_buffers.emplace_back(buf);
-
-                size_t size_main = ggml_backend_buffer_get_size(buf);
-                PARAKEET_LOG_INFO("%12s total size = %8.2f MB\n", ggml_backend_buffer_name(buf), size_main / 1e6);
-            }
-        }
-        //output_tensors = root_module->build_graph(this, input_tensors);
-        init_schedule(input_tensors);
-        ggml_free(input_ctx);
-        if (input_buffer)
-        {
-            ggml_backend_buffer_free(input_buffer);
-        }
+        model_tensor_container->free_temp_ctx();
+        model_tensor_container->allocate_tensors_on_backend_buffers();
+        //TODO: load model weights from file
+        // If we load weight to tensors in model_tensor_container, we may not need set_data method.
+        // In module->build_graph, we can directly fetch weight tensors by string path key.
+        root_module->set_data(this);
+        init_schedule();
         return 0;
     }
 
-    TensorBag Session::init_input(std::function<TensorBag(Session*)> define_input_tensors)
-    {
-        /// when we count the number of tensors, root_module->tensor_count() should
-        /// contain the number of tensors of weights and biases, and also including
-        /// intermediate tensors. You should define the number in module class.
-        auto n_tensors = root_module->tensor_count() + 64;
-        ggml_init_params params = {
-            /*.mem_size   =*/ n_tensors * ggml_tensor_overhead(),
-            /*.mem_buffer =*/ nullptr,
-            /*.no_alloc   =*/ true,
-        };
-
-        input_ctx = ggml_init(params);
-        if (!input_ctx) {
-            throw std::runtime_error("failed to create ggml context for input");
-        }
-
-        auto input_tensors = define_input_tensors(this);
-
-        ggml_backend_buffer_type_t cpu_buft = buft_list.back().second;
-        input_buffer = ggml_backend_alloc_ctx_tensors_from_buft(input_ctx, cpu_buft);
-        if (input_buffer)
-        {
-            size_t size_main = ggml_backend_buffer_get_size(input_buffer);
-            PARAKEET_LOG_INFO("%12s total size = %8.2f MB\n", ggml_backend_buffer_name(input_buffer), size_main / 1e6);
-        }
-        return input_tensors;
-    }
-
     void Session::run(
-                std::function<TensorBag(Session*)> define_input_tensors,
-                std::function<void(Session*)> set_input_data,
+                std::function<TensorBag(Session*, TensorContainer*)> define_input_tensors,
+                std::function<void(Session*, TensorContainer*)> set_input_data,
                 std::function<void(Session*, TensorBag)> return_output
                 )
     {
-        printf("running session\n");
-        auto input_tensors = init_input(std::move(define_input_tensors));
+        std::unique_ptr<TensorContainer>  session_tensor_container = std::make_unique<TensorContainer>(
+            buft_list, root_module->tensor_count());
+        auto input_tensors = define_input_tensors(this, session_tensor_container.get());
         printf("input tensors defined\n");
-        set_input_data(this);
         printf("input data set\n");
-        output_tensors = root_module->build_graph(this, input_tensors);
-        root_module->set_data(this);
+        output_tensors = root_module->build_graph(this, input_tensors, session_tensor_container.get());
+        session_tensor_container->allocate_tensors_on_backend_buffers();
+        session_tensor_container->free_temp_ctx();
+        set_input_data(this, session_tensor_container.get());
         printf("data set\n");
         run_schedule(input_tensors);
         return_output(this, output_tensors);
-
-        // free input context
-        ggml_free(input_ctx);
-        ggml_backend_buffer_free(input_buffer);
     }
 
     ModelLoader::ModelLoader(std::string model_path)
