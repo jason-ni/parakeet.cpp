@@ -113,6 +113,7 @@ enum ggmlf_tensor {
     GGMLF_TENSOR_CLS,
     GGMLF_TENSOR_CLS_OUT,
     GGMLF_TENSOR_CONV1D,
+    GGMLF_TENSOR_CONV2D,
     GGMLF_TENSOR_CONVNEXT_DW,
     GGMLF_TENSOR_CONVNEXT_NORM,
     GGMLF_TENSOR_CONVNEXT_PW1,
@@ -257,6 +258,7 @@ static const std::map<ggmlf_tensor, ggml_op> ggmlf_tensor_info_mapping = {
     // this tensor is loaded for T5, but never used
     {GGMLF_TENSOR_DEC_CROSS_ATTN_REL_B,  GGML_OP_NONE},
     {GGMLF_TENSOR_CONV1D,      GGML_OP_IM2COL},
+    {GGMLF_TENSOR_CONV2D,      GGML_OP_IM2COL},
     {GGMLF_TENSOR_POS_NET_NORM,  GGML_OP_MUL},
     {GGMLF_TENSOR_POS_NET_NORM1,  GGML_OP_MUL},
     {GGMLF_TENSOR_POS_NET_NORM2,  GGML_OP_MUL},

@@ -4,88 +4,7 @@
 #include "ggml.h"
 #include "ggml-backend-impl.h"
 #include "framework.h"
-
-#include <utility>
-
-#ifdef __GNUC__
-#ifdef __MINGW32__
-#define PARAKEET_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
-#else
-#define PARAKEET_ATTRIBUTE_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
-#endif
-#else
-#define PARAKEET_ATTRIBUTE_FORMAT(...)
-#endif
-
-//
-// logging
-//
-
-PARAKEET_ATTRIBUTE_FORMAT(5, 6)
-static void parakeet_log_internal        (ggml_log_level level, const char * file, int line, const char * func, const char * format, ...);
-static void parakeet_log_callback_default(ggml_log_level level, const char * text, void * user_data);
-
-#define PARAKEET_LOG_ERROR(...) parakeet_log_internal(GGML_LOG_LEVEL_ERROR, __FILE__, __LINE__, __func__, __VA_ARGS__)
-#define PARAKEET_LOG_WARN(...)  parakeet_log_internal(GGML_LOG_LEVEL_WARN , __FILE__, __LINE__, __func__, __VA_ARGS__)
-#define PARAKEET_LOG_INFO(...)  parakeet_log_internal(GGML_LOG_LEVEL_INFO , __FILE__, __LINE__, __func__, __VA_ARGS__)
-
-static void parakeet_log_callback_default(ggml_log_level level, const char * text, void * user_data) {
-    (void) level;
-    (void) user_data;
-    fputs(text, stderr);
-    fflush(stderr);
-}
-
-struct parakeet_global {
-    // We save the log callback globally
-    ggml_log_callback log_callback = parakeet_log_callback_default;
-    void * log_callback_user_data = nullptr;
-};
-static parakeet_global g_state;
-
-GGML_ATTRIBUTE_FORMAT(5, 6)
-static void parakeet_log_internal(
-    ggml_log_level level,
-    const char * file,
-    int line,
-    const char * func,
-    const char * format, ...) {
-    va_list args;
-    va_start(args, format);
-    char buffer[1024];
-    int len = vsnprintf(buffer, 1024, format, args);
-    if (len < 1024) {
-        char formatted_buffer[2048];
-        snprintf(formatted_buffer, sizeof(formatted_buffer),
-                 "%s:%d:<%s> %s", file, line, func, buffer);
-        g_state.log_callback(level, formatted_buffer, g_state.log_callback_user_data);
-    } else {
-        char* buffer2 = new char[len+1];
-        vsnprintf(buffer2, len+1, format, args);
-        buffer2[len] = 0;
-        char formatted_buffer[2048];
-        snprintf(formatted_buffer, sizeof(formatted_buffer),
-                 "%s:%d:<%s> %s", file, line, func, buffer2);
-        g_state.log_callback(level, formatted_buffer, g_state.log_callback_user_data);
-        delete[] buffer2;
-    }
-    va_end(args);
-}
-
-static std::string format(const char * fmt, ...) {
-    va_list ap;
-    va_list ap2;
-    va_start(ap, fmt);
-    va_copy(ap2, ap);
-    int size = vsnprintf(NULL, 0, fmt, ap);
-    GGML_ASSERT(size >= 0 && size < INT_MAX); // NOLINT
-    std::vector<char> buf(size + 1);
-    int size2 = vsnprintf(buf.data(), size + 1, fmt, ap2);
-    GGML_ASSERT(size2 == size);
-    va_end(ap2);
-    va_end(ap);
-    return std::string(buf.data(), size);
-}
+#include "framework_common.h"
 
 namespace ggml_runtime
 {
@@ -231,17 +150,17 @@ namespace ggml_runtime
 
     TensorBag::TensorBag()
     {
-        tensors = std::vector<ggml_tensor*>();
+        tensors = std::vector<ggml_bf_tensor>();
     }
 
-    void TensorBag::add_tensor(ggml_tensor* tensor)
+    void TensorBag::add_tensor(ggml_bf_tensor tensor)
     {
-        tensors.push_back(tensor);
+        tensors.emplace_back(tensor);
     }
 
-    ggml_tensor* TensorBag::get_tensor(const size_t index) const
+    ggml_bf_tensor TensorBag::get_tensor(const size_t index) const
     {
-        assert(index < tensors.size());
+        GGML_ASSERT(index < tensors.size());
         return tensors[index];
     };
 
@@ -263,7 +182,7 @@ namespace ggml_runtime
                 instance = new BackendManager(params);
                 instance->init_backends();
             } catch (const std::exception& e) {
-                PARAKEET_LOG_ERROR("Failed to create BackendManager instance: %s\n", e.what());
+                GGMLF_LOG_ERROR("Failed to create BackendManager instance: %s\n", e.what());
                 throw;
             }
         });
@@ -276,7 +195,7 @@ namespace ggml_runtime
         //TODO: make a global variable for the backend manager
 
         ggml_time_init();
-        ggml_log_set(g_state.log_callback, g_state.log_callback_user_data);
+        //ggml_log_set(g_state.log_callback, g_state.log_callback_user_data);
 
         // NOTE: copied from llama.cpp, don't know if it's necessary
         // needed to initialize f16 tables
@@ -287,7 +206,7 @@ namespace ggml_runtime
         }
 
         auto dev_count = ggml_backend_dev_count();
-        PARAKEET_LOG_INFO("Found %zu devices.\n", dev_count);
+        GGMLF_LOG_INFO("Found %zu devices.\n", dev_count);
 
         ggml_backend_dev_t dev = nullptr;
         // gpu backend
@@ -296,7 +215,7 @@ namespace ggml_runtime
             int idx = 0;
             for (int i = 0; i < dev_count; i++) {
                 ggml_backend_dev_t dev_cur = ggml_backend_dev_get(i);
-                PARAKEET_LOG_INFO("Device %d: %s\n", i, ggml_backend_dev_name(dev_cur));
+                GGMLF_LOG_INFO("Device %d: %s\n", i, ggml_backend_dev_name(dev_cur));
                 if (ggml_backend_dev_type(dev_cur) == GGML_BACKEND_DEVICE_TYPE_GPU) {
                     if (idx == 0 || idx == params.gpu_device_idx) {
                         dev = dev_cur;
@@ -313,10 +232,10 @@ namespace ggml_runtime
                 }
             }
             if (dev != nullptr) {
-                PARAKEET_LOG_INFO("Using GPU backend: %s\n", ggml_backend_dev_name(dev));
+                GGMLF_LOG_INFO("Using GPU backend: %s\n", ggml_backend_dev_name(dev));
                 ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
                 if (backend == nullptr) {
-                    PARAKEET_LOG_ERROR("Failed to initialize GPU backend.\n");
+                    GGMLF_LOG_ERROR("Failed to initialize GPU backend.\n");
                 } else
                 {
                     backends.push_back(backend);
@@ -330,10 +249,10 @@ namespace ggml_runtime
         for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             ggml_backend_dev_t dev = ggml_backend_dev_get(i);
             if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_ACCEL) {
-                PARAKEET_LOG_INFO("Using %s backend\n", ggml_backend_dev_name(dev));
+                GGMLF_LOG_INFO("Using %s backend\n", ggml_backend_dev_name(dev));
                 ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
                 if (!backend) {
-                    PARAKEET_LOG_INFO("failed to initialize %s backend\n", ggml_backend_dev_name(dev));
+                    GGMLF_LOG_INFO("failed to initialize %s backend\n", ggml_backend_dev_name(dev));
                     continue;
                 }
                 backends.push_back(backend);
@@ -345,7 +264,7 @@ namespace ggml_runtime
         if (backend_cpu == nullptr) {
             throw std::runtime_error("failed to initialize CPU backend");
         }
-        PARAKEET_LOG_INFO("Using CPU backend\n");
+        GGMLF_LOG_INFO("Using CPU backend\n");
         backends.push_back(backend_cpu);
 
         // CPU Extra
@@ -367,7 +286,7 @@ namespace ggml_runtime
         {
             ggml_backend_dev_t dev = buft.first;
             ggml_backend_buffer_type_t buft_type = buft.second;
-            PARAKEET_LOG_INFO("Buffer type: %s\n", buft_type->iface.get_name(buft_type));
+            GGMLF_LOG_INFO("Buffer type: %s\n", buft_type->iface.get_name(buft_type));
         }
 
     }
@@ -415,41 +334,91 @@ namespace ggml_runtime
             temp_ctx = nullptr;
         }
     }
-    ggml_tensor* TensorContainer::get_tensor_by_name(const std::string& name)
+    ggml_bf_tensor TensorContainer::get_tensor_by_name(const std::string& name)
     {
         auto it = tensor_lookup.find(name);
         if (it == tensor_lookup.end()) {
-            return nullptr;
+            throw std::runtime_error(format("tensor %s not found", name.c_str()));
         }
         return it->second;
     }
 
-
-    ggml_tensor* TensorContainer::create_tensor_1d(
-        std::string name,
+    ggml_bf_tensor TensorContainer::m_create_tensor(
+        ggml_tensor* meta,
         ggmlf_tensor tensor_type,
-        ggml_type data_type,
-        int64_t ne0)
+        ggml_op op,
+        std::string& name)
     {
-        ggml_op op = ggmlf_tensor_info_mapping.at(tensor_type);
-
-        ggml_tensor* meta = ggml_new_tensor_1d(get_temp_ctx(), data_type, ne0);
-
         ggml_backend_buffer_type_t buft = select_weight_buft(meta, op, buft_list);
         if (!buft) {
             throw std::runtime_error(format(
                 "failed to find a compatible buffer type for tensor %s",
                 ggmlf_tensor_info_mapping.at(tensor_type)));
         }
+        GGMLF_LOG_INFO("Using %s buffer for tensor %s\n",
+            buft->iface.get_name(buft),
+            name.c_str());
 
-        ggml_context * ctx = get_ctx_of_buffer_type(buft);
-        ggml_tensor * tensor = ggml_dup_tensor(ctx, meta);
+        ggml_bf_context bf_ctx = get_ctx_of_buffer_type(buft);
+        ggml_tensor * tensor = ggml_dup_tensor(bf_ctx.ctx, meta);
         ggml_set_name(tensor, name.c_str());
-        tensor_lookup.insert(std::make_pair(name, tensor));
-        return tensor;
+        auto bf_tensor = ggml_bf_tensor(tensor, buft);
+        tensor_lookup.insert(std::make_pair(name, bf_tensor));
+        return bf_tensor;
     }
 
-    ggml_context* TensorContainer::get_ctx_of_buffer_type(ggml_backend_buffer_type_t buft)
+
+    ggml_bf_tensor TensorContainer::create_tensor_1d(
+        std::string name,
+        ggmlf_tensor tensor_type,
+        ggml_type data_type,
+        int64_t ne0)
+    {
+        ggml_op op = ggmlf_tensor_info_mapping.at(tensor_type);
+        ggml_tensor* meta = ggml_new_tensor_1d(get_temp_ctx(), data_type, ne0);
+        return m_create_tensor(meta, tensor_type, op, name);
+    }
+
+    ggml_bf_tensor TensorContainer::create_tensor_2d(
+        std::string name,
+        ggmlf_tensor tensor_type,
+        ggml_type data_type,
+        int64_t ne0,
+        int64_t ne1)
+    {
+        ggml_op op = ggmlf_tensor_info_mapping.at(tensor_type);
+        ggml_tensor* meta = ggml_new_tensor_2d(get_temp_ctx(), data_type, ne0, ne1);
+        return m_create_tensor(meta, tensor_type, op, name);
+    }
+
+    ggml_bf_tensor TensorContainer::create_tensor_3d(
+        std::string name,
+        ggmlf_tensor tensor_type,
+        ggml_type data_type,
+        int64_t ne0,
+        int64_t ne1,
+        int64_t ne2)
+    {
+        ggml_op op = ggmlf_tensor_info_mapping.at(tensor_type);
+        ggml_tensor* meta = ggml_new_tensor_3d(get_temp_ctx(), data_type, ne0, ne1, ne2);
+        return m_create_tensor(meta, tensor_type, op, name);
+    }
+
+    ggml_bf_tensor TensorContainer::create_tensor_4d(
+        std::string name,
+        ggmlf_tensor tensor_type,
+        ggml_type data_type,
+        int64_t ne0,
+        int64_t ne1,
+        int64_t ne2,
+        int64_t ne3)
+    {
+        ggml_op op = ggmlf_tensor_info_mapping.at(tensor_type);
+        ggml_tensor* meta = ggml_new_tensor_4d(get_temp_ctx(), data_type, ne0, ne1, ne2, ne3);
+        return m_create_tensor(meta, tensor_type, op, name);
+    }
+
+    ggml_bf_context TensorContainer::get_ctx_of_buffer_type(ggml_backend_buffer_type_t buft)
     {
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
@@ -464,9 +433,10 @@ namespace ggml_runtime
                 throw std::runtime_error(format("failed to create ggml context"));
             }
 
-            ctx_map[buft] = ctx;
+            ggml_bf_context bf_ctx = ggml_bf_context(ctx, buft);
+            ctx_map.insert(std::make_pair(buft, bf_ctx));
 
-            return ctx;
+            return bf_ctx;
         }
 
         return it->second;
@@ -476,21 +446,22 @@ namespace ggml_runtime
     {
         for (auto & p : ctx_map) {
             ggml_backend_buffer_type_t buft = p.first;
-            ggml_context * ctx = p.second;
-            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+            ggml_bf_context bf_ctx = p.second;
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(bf_ctx.ctx, buft);
             if (buf) {
                 backend_buffers.emplace_back(buf);
 
-                size_t size_main = ggml_backend_buffer_get_size(buf);
-                PARAKEET_LOG_INFO("%12s total size = %8.2f MB\n", ggml_backend_buffer_name(buf), size_main / 1e6);
+                //size_t size_main = ggml_backend_buffer_get_size(buf);
+                //GGMLF_LOG_INFO("%12s total size = %8.2f MB\n", ggml_backend_buffer_name(buf), size_main / 1e6);
             }
         }
     }
 
-    Session::Session(Params params, Module* module)
+    Session::Session(Params params, Module* module, GGUFLoader* gguf_loader)
     {
         this->params = params;
         this->root_module = module;
+        this->gguf_loader = gguf_loader;
     }
 
     static bool ggml_graph_compute_helper(
@@ -538,15 +509,15 @@ namespace ggml_runtime
 
         for (size_t i = 0; i < input_tensors.tensor_count(); ++i)
         {
-            ggml_tensor * tensor = input_tensors.get_tensor(i);
-            ggml_set_input(tensor);
+            ggml_bf_tensor bf_tensor = input_tensors.get_tensor(i);
+            ggml_set_input(bf_tensor.tensor);
         }
 
         for (size_t i = 0; i < output_tensors.tensor_count(); ++i)
         {
-            ggml_tensor * tensor = output_tensors.get_tensor(i);
-            ggml_set_output(tensor);
-            ggml_build_forward_expand(gf, tensor);
+            ggml_bf_tensor bf_tensor = output_tensors.get_tensor(i);
+            ggml_set_output(bf_tensor.tensor);
+            ggml_build_forward_expand(gf, bf_tensor.tensor);
         }
 
         ggml_free(ctx);
@@ -561,13 +532,13 @@ namespace ggml_runtime
         // allocate graph in the backend
         if (!ggml_backend_sched_alloc_graph(sched, gf)) {
             // should never happen as we pre-allocate the memory
-            PARAKEET_LOG_ERROR("Failed to allocate graph\n");
+            GGMLF_LOG_ERROR("Failed to allocate graph\n");
             throw std::runtime_error("failed to allocate graph");
         }
 
         if (!ggml_graph_compute_helper(sched, gf, 1))
         {
-            PARAKEET_LOG_ERROR("Failed to compute graph\n");
+            GGMLF_LOG_ERROR("Failed to compute graph\n");
             throw std::runtime_error("failed to compute graph");
         }
 
@@ -614,17 +585,5 @@ namespace ggml_runtime
         return_output(this, output_tensors);
     }
 
-    ModelLoader::ModelLoader(std::string model_path)
-    {
-        this->model_path = std::move(model_path);
-    }
-
-    int ModelLoader::load_model(ggml_context* ctx)
-    {
-        return 0;
-    }
-
-    ModelLoader::~ModelLoader()
-    = default;
 
 }

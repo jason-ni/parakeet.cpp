@@ -3,10 +3,8 @@
 //
 #pragma once
 
-#include <cassert>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 #include <map>
 #include <iostream>
@@ -15,11 +13,31 @@
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 #include "framework_def.h"
+#include "framework_model.h"
 
 namespace ggml_runtime
 {
     using buft_list_t = std::vector<std::pair<ggml_backend_dev_t, ggml_backend_buffer_type_t>>;
-    using buft_ctx_map_t = std::map<ggml_backend_buffer_type_t, ggml_context*>;
+
+    struct ggml_bf_tensor
+    {
+        ggml_tensor* tensor;
+        ggml_backend_buffer_type_t buft;
+
+        ggml_bf_tensor(ggml_tensor* tensor, ggml_backend_buffer_type_t buft) : tensor(tensor), buft(buft) {}
+    };
+    using ggml_bf_tensor_t = ggml_bf_tensor*;
+
+    struct ggml_bf_context
+    {
+        ggml_context* ctx;
+        ggml_backend_buffer_type_t buft;
+
+        ggml_bf_context(ggml_context* ctx, ggml_backend_buffer_type_t buft) : ctx(ctx), buft(buft) {}
+    };
+    using ggml_bf_context_t = ggml_bf_context*;
+
+    using buft_ctx_map_t = std::map<ggml_backend_buffer_type_t, ggml_bf_context>;
 
     class TensorBag
     {
@@ -27,15 +45,13 @@ namespace ggml_runtime
             TensorBag();
             ~TensorBag() = default;
 
-            void add_tensor(ggml_tensor* tensor);
+            void add_tensor(ggml_bf_tensor tensor);
 
-            ggml_tensor* get_first() const;
-
-            ggml_tensor* get_tensor(size_t index) const;
+            ggml_bf_tensor get_tensor(size_t index) const;
 
             size_t tensor_count() const;
         private:
-            std::vector<ggml_tensor*> tensors;
+            std::vector<ggml_bf_tensor> tensors;
     };
 
     class Session;
@@ -55,31 +71,6 @@ namespace ggml_runtime
         // Sets the data for the module's tensors.
         virtual void set_data(Session* session) = 0;
 
-    };
-
-    class Conv2D : public Module {
-    public:
-        Conv2D(const std::string& name, int input_channels, int output_channels, int kernel_size, int stride, int padding);
-        ~Conv2D() = default;
-
-        int tensor_count() override;
-
-        void define_tensors(Session* session) override;
-
-        TensorBag build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container) override;
-
-        void set_data(Session* session) override;
-
-    private:
-        int input_channels;
-        int output_channels;
-        int kernel_size;
-        int stride;
-        int padding;
-
-        ggml_tensor* weights;
-        ggml_tensor* bias;
-        ggml_tensor* output;
     };
 
     struct Params
@@ -113,7 +104,7 @@ namespace ggml_runtime
         {
             for (auto & p : ctx_map)
             {
-                ggml_free(p.second);
+                ggml_free(p.second.ctx);
             }
             for (auto & b : backend_buffers)
             {
@@ -125,16 +116,40 @@ namespace ggml_runtime
         }
 
         ggml_context* get_temp_ctx();
-        ggml_context* get_ctx_of_buffer_type(ggml_backend_buffer_type_t buft);
+        ggml_bf_context get_ctx_of_buffer_type(ggml_backend_buffer_type_t buft);
         void allocate_tensors_on_backend_buffers();
         void free_temp_ctx();
-        ggml_tensor* get_tensor_by_name(const std::string& name);
+        ggml_bf_tensor get_tensor_by_name(const std::string& name);
 
-        ggml_tensor* create_tensor_1d(
+        ggml_bf_tensor create_tensor_1d(
             std::string name,
             ggmlf_tensor tensor_type,
-            enum ggml_type data_type,
+            ggml_type data_type,
             int64_t ne0);
+
+        ggml_bf_tensor create_tensor_2d(
+            std::string name,
+            ggmlf_tensor tensor_type,
+            ggml_type data_type,
+            int64_t ne0,
+            int64_t ne1);
+
+        ggml_bf_tensor create_tensor_3d(
+            std::string name,
+            ggmlf_tensor tensor_type,
+            ggml_type data_type,
+            int64_t ne0,
+            int64_t ne1,
+            int64_t ne2);
+
+        ggml_bf_tensor create_tensor_4d(
+            std::string name,
+            ggmlf_tensor tensor_type,
+            ggml_type data_type,
+            int64_t ne0,
+            int64_t ne1,
+            int64_t ne2,
+            int64_t ne3);
 
     private:
         size_t max_n_tensors;
@@ -142,14 +157,20 @@ namespace ggml_runtime
         buft_list_t buft_list;
         buft_ctx_map_t ctx_map;
         std::vector<ggml_backend_buffer_t> backend_buffers; // used to free the buffers when the tensor container is destroyed.
-        std::map<std::string, ggml_tensor*> tensor_lookup;
+        std::map<std::string, ggml_bf_tensor> tensor_lookup;
+
+        ggml_bf_tensor m_create_tensor(
+            ggml_tensor* meta,
+            ggmlf_tensor tensor_type,
+            ggml_op op,
+            std::string& name);
     };
 
 
     class Session
     {
         public:
-            explicit Session(Params params, Module* module);
+            explicit Session(Params params, Module* module, GGUFLoader* gguf_loader);
             ~Session() = default;
 
             int setup();
@@ -169,6 +190,7 @@ namespace ggml_runtime
 
             ggml_context* input_ctx;
             std::unique_ptr<TensorContainer> model_tensor_container;
+            GGUFLoader* gguf_loader;
 
         private:
             void init_schedule();
@@ -187,18 +209,5 @@ namespace ggml_runtime
             TensorBag output_tensors;
     };
 
-    class ModelLoader
-    {
-        public:
-            explicit ModelLoader(std::string model_path);
-            ~ModelLoader();
-
-            int load_model(ggml_context* ctx);
-
-
-        protected:
-            std::string model_path;
-
-    };
 }
 
