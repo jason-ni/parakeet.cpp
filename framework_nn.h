@@ -48,4 +48,21 @@ namespace ggml_runtime
         ggml_bf_tensor bias = ggml_bf_tensor(nullptr, nullptr);
     };
 
+    class ReLU : public Module {
+    public:
+        ReLU(const std::string& name): name(name) {}
+        ~ReLU() = default;
+
+        int tensor_count() override;
+
+        void define_tensors(Session* session) override;
+
+        TensorBag build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container) override;
+
+        void set_data(Session* session) override;
+
+    private:
+        std::string name;
+    };
+
 }

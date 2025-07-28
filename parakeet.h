@@ -20,10 +20,13 @@ class SubSampling : public ggml_runtime::Module
                 3,
                 2,
                 1);
+            m_relu = new ggml_runtime::ReLU(
+                this->name + ".1");
         };
         ~SubSampling()
         {
             delete m_conv2d;
+            delete m_relu;
         }
 
     int tensor_count() override;
@@ -40,5 +43,6 @@ class SubSampling : public ggml_runtime::Module
     private:
         std::string name;
         ggml_runtime::Conv2D* m_conv2d;
+        ggml_runtime::ReLU* m_relu;
 };
 

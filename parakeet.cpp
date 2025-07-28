@@ -6,7 +6,7 @@
 
 int SubSampling::tensor_count()
 {
-    return m_conv2d->tensor_count() + 8;
+    return m_conv2d->tensor_count() + 8 + m_conv2d->tensor_count();
 }
 
 void SubSampling::define_tensors(ggml_runtime::Session* session)
@@ -26,7 +26,10 @@ ggml_runtime::TensorBag SubSampling::build_graph(ggml_runtime::Session* session,
     output_tensors.add_tensor(ggml_runtime::ggml_bf_tensor(input_f16, bf_ctx.buft));
     */
 
-    return m_conv2d->build_graph(session, input_tensors, session_tensor_container);
+    auto conv2d_output_tensors = m_conv2d->build_graph(session, input_tensors, session_tensor_container);
+    //return conv2d_output_tensors;
+    auto relu_output_tensors = m_relu->build_graph(session, conv2d_output_tensors, session_tensor_container);
+    return relu_output_tensors;
 }
 
 void SubSampling::set_data(ggml_runtime::Session* session)

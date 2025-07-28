@@ -71,6 +71,23 @@ namespace ggml_runtime
         GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
     }
 
+    int ReLU::tensor_count()
+    {
+        return 1;
+    }
 
+    void ReLU::define_tensors(Session* session){}
+
+    TensorBag ReLU::build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container)
+    {
+        auto input_tensor = input_tensors.get_tensor(0);
+        ggml_bf_context bf_ctx = session_tensor_container->get_ctx_of_buffer_type(input_tensor.buft);
+        ggml_tensor* relu_tensor = ggml_relu_inplace(bf_ctx.ctx, input_tensor.tensor);
+        auto output_tensor_bag = TensorBag();
+        output_tensor_bag.add_tensor(ggml_bf_tensor(relu_tensor, bf_ctx.buft));
+        return output_tensor_bag;
+    }
+
+    void ReLU::set_data(Session* session){}
 
 }
