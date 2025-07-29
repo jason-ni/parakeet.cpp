@@ -91,13 +91,14 @@ namespace ggml_runtime
                     const int64_t d_state      = w->ne[0];
                     const int64_t d_inner      = w->ne[1];
                     const int64_t n_seq_tokens = 512;
-                    const int64_t n_seqs       = 1;
+                    const int64_t n_seqs       = 3;
                     ggml_tensor * s  = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_state, d_inner, n_seqs);
                     ggml_tensor * x = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_inner, n_seq_tokens, n_seqs);
                     ggml_tensor * dt = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_inner, n_seq_tokens, n_seqs);
                     ggml_tensor * B = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_state, n_seq_tokens, n_seqs);
                     ggml_tensor * C = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, d_state, n_seq_tokens, n_seqs);
-                    op_tensor = ggml_ssm_scan(ctx, s, x, dt, w, B, C);
+                    ggml_tensor * ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, n_seqs);
+                    op_tensor = ggml_ssm_scan(ctx, s, x, dt, w, B, C, ids);
                 } break;
             case GGML_OP_RWKV_WKV6:
                 {
@@ -167,6 +168,18 @@ namespace ggml_runtime
     size_t TensorBag::tensor_count() const
     {
         return tensors.size();
+    }
+
+    void TensorBag::set_first_tensor(ggml_bf_tensor tensor)
+    {
+        if (tensors.empty())
+        {
+            tensors.emplace_back(tensor);
+        }
+        else
+        {
+            tensors[0] = tensor;
+        }
     }
 
     BackendManager::BackendManager(Params params)
@@ -343,6 +356,11 @@ namespace ggml_runtime
         return it->second;
     }
 
+    bool TensorContainer::has_tensor_by_name(const std::string& name)
+    {
+        return tensor_lookup.find(name)!= tensor_lookup.end();
+    }
+
     ggml_bf_tensor TensorContainer::m_create_tensor(
         ggml_tensor* meta,
         ggmlf_tensor tensor_type,
@@ -367,6 +385,10 @@ namespace ggml_runtime
         return bf_tensor;
     }
 
+    void TensorContainer::cache_tensor(std::string name, ggml_bf_tensor tensor)
+    {
+        tensor_lookup.insert(std::make_pair(name, tensor));
+    }
 
     ggml_bf_tensor TensorContainer::create_tensor_1d(
         std::string name,
@@ -457,6 +479,27 @@ namespace ggml_runtime
         }
     }
 
+    void TensorContainer::dump_tensors()
+    {
+        for (auto &p : ctx_map)
+        {
+            ggml_backend_buffer_type_t buft = p.first;
+            ggml_bf_context bf_ctx = p.second;
+            auto iter_tensor = ggml_get_first_tensor(bf_ctx.ctx);
+            while (iter_tensor)
+            {
+                auto tensor_name = ggml_get_name(iter_tensor);
+                if (tensor_name == nullptr)
+                {
+                    tensor_name = "unknown";
+                }
+                auto tensor_backend_buf_name = iter_tensor->buffer->buft->iface.get_name(iter_tensor->buffer->buft);
+                GGMLF_LOG_INFO("Tensor: %s, %s\n", tensor_name, tensor_backend_buf_name);
+                iter_tensor = ggml_get_next_tensor(bf_ctx.ctx, iter_tensor);
+            }
+        }
+    }
+
     Session::Session(Params params, Module* module, GGUFLoader* gguf_loader)
     {
         this->params = params;
@@ -491,8 +534,10 @@ namespace ggml_runtime
         auto & meta = sched_meta;
 
         auto n_tensors = root_module->tensor_count() + 64;
-        sched = ggml_backend_sched_new(backends.data(), nullptr, backends.size(), n_tensors, false);
+        sched = ggml_backend_sched_new(backends.data(), nullptr, backends.size(), n_tensors, false, false);
         meta.resize(ggml_tensor_overhead() * n_tensors + ggml_graph_overhead());
+
+
     }
 
     void Session::build_graph(TensorBag input_tensors)
@@ -557,9 +602,6 @@ namespace ggml_runtime
         root_module->define_tensors(this);
         model_tensor_container->free_temp_ctx();
         model_tensor_container->allocate_tensors_on_backend_buffers();
-        //TODO: load model weights from file
-        // If we load weight to tensors in model_tensor_container, we may not need set_data method.
-        // In module->build_graph, we can directly fetch weight tensors by string path key.
         root_module->set_data(this);
         init_schedule();
         return 0;
@@ -568,21 +610,18 @@ namespace ggml_runtime
     void Session::run(
                 std::function<TensorBag(Session*, TensorContainer*)> define_input_tensors,
                 std::function<void(Session*, TensorContainer*)> set_input_data,
-                std::function<void(Session*, TensorBag)> return_output
+                std::function<void(Session*, TensorBag, TensorContainer*)> return_output
                 )
     {
         std::unique_ptr<TensorContainer>  session_tensor_container = std::make_unique<TensorContainer>(
             buft_list, root_module->tensor_count());
         auto input_tensors = define_input_tensors(this, session_tensor_container.get());
-        printf("input tensors defined\n");
-        printf("input data set\n");
         output_tensors = root_module->build_graph(this, input_tensors, session_tensor_container.get());
         session_tensor_container->allocate_tensors_on_backend_buffers();
         session_tensor_container->free_temp_ctx();
         set_input_data(this, session_tensor_container.get());
-        printf("data set\n");
         run_schedule(input_tensors);
-        return_output(this, output_tensors);
+        return_output(this, output_tensors, session_tensor_container.get());
     }
 
 

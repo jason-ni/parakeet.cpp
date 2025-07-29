@@ -85,7 +85,7 @@ void ggml_tensor_to_str_summarized(char* buf, size_t size, const struct ggml_ten
     const int n_dims = ggml_n_dims(tensor);
 
     // This implementation only supports FP32 tensors for simplicity.
-    if (tensor->type != GGML_TYPE_F32) {
+    if (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16) {
         append_str(buf, size, &offset, "tensor(unsupported type: %s)", ggml_type_name(tensor->type));
         return;
     }
@@ -109,8 +109,17 @@ void ggml_tensor_to_str_summarized(char* buf, size_t size, const struct ggml_ten
                 for (int d = 0; d < n_dims; ++d) {
                     elem_offset += indices[d] * tensor->nb[d];
                 }
-                float* data = (float*)((char*)tensor_data + elem_offset);
-                append_str(buf, size, &offset, "%7.4f", *data);
+                float data = 0.0f;
+                if (tensor->type == GGML_TYPE_F32)
+                {
+                    auto data_p = (float*)((char*)tensor_data + elem_offset);
+                    data = *data_p;
+                } else
+                {
+                    ggml_fp16_t* data16 = (uint16_t*)((char*)tensor_data + elem_offset);
+                    data = ggml_fp16_to_fp32(*data16);
+                }
+                append_str(buf, size, &offset, "%9.6f", data);
             }
         };
 
@@ -175,9 +184,17 @@ void ggml_tensor_to_str_summarized(char* buf, size_t size, const struct ggml_ten
 
     // Print shape and type
     append_str(buf, size, &offset, ",\n shape: (");
+    /*
     for (int i = n_dims - 1; i >= 0; --i) {
         append_str(buf, size, &offset, "%d", (int)tensor->ne[i]);
         if (i > 0) {
+            append_str(buf, size, &offset, ", ");
+        }
+    }
+    */
+    for (int i = 0; i < n_dims; i++) {
+        append_str(buf, size, &offset, "%d", (int)tensor->ne[i]);
+        if (i >= 0) {
             append_str(buf, size, &offset, ", ");
         }
     }

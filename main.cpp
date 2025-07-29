@@ -4,7 +4,6 @@
 #include <ggml-backend-impl.h>
 
 #include "ggml.h"
-#include "whisper.h"
 #include "framework.h"
 #include "framework_common.h"
 #include "framework_nn.h"
@@ -84,7 +83,8 @@ void test_case_1_simple_infer()
     };
 
 
-    std::function<void(ggml_runtime::Session*, ggml_runtime::TensorBag)> output_fn = [&](ggml_runtime::Session* session, ggml_runtime::TensorBag output_tensors)
+    std::function<void(ggml_runtime::Session*, ggml_runtime::TensorBag, ggml_runtime::TensorContainer*)> output_fn = [&](
+        ggml_runtime::Session* session, ggml_runtime::TensorBag output_tensors, ggml_runtime::TensorContainer* session_tensor_container)
     {
         auto print_array = [](float* arr, int size)
         {
@@ -155,7 +155,8 @@ int main()
     params.use_gpu = true;
     params.gpu_device_idx = 0;
 
-    auto root_module = SubSampling("encoder.pre_encode.conv");
+    auto root_module = ConFormer("encoder");
+    //auto root_module = ggml_runtime::RelPositionalEncoding("pos_enc", 1024, 5000);
     auto session = ggml_runtime::Session(params, &root_module, &gguf_loader);
     session.setup();
 
@@ -169,11 +170,9 @@ int main()
         auto input_fp32 = session_tensor_container->create_tensor_4d(
             "subsampling.input.fp32", GGMLF_TENSOR_BIAS, GGML_TYPE_F32,
             128, 4775, 1, 1);
-        /*
-        auto input_16 = session_tensor_container->create_tensor_4d(
-            "subsampling.input.fp16", GGMLF_TENSOR_BIAS, GGML_TYPE_F32,
-            128, 4775, 1, 1);
-            */
+        //auto input_16 = session_tensor_container->create_tensor_4d(
+        //    "subsampling.input.fp16", GGMLF_TENSOR_BIAS, GGML_TYPE_F16,
+        //    128, 4775, 1, 1);
         input_tensors.add_tensor(input_fp32);
         //input_tensors.add_tensor(input_16);
         return input_tensors;
@@ -194,18 +193,23 @@ int main()
         GGMLF_LOG_DATA(input.tensor, input_audio_features.data());
     };
 
-    std::function<void(ggml_runtime::Session*, ggml_runtime::TensorBag)> output_fn = [&](ggml_runtime::Session* session, ggml_runtime::TensorBag output_tensors)
+    std::function<void(ggml_runtime::Session*, ggml_runtime::TensorBag, ggml_runtime::TensorContainer*)> output_fn = [&](
+        ggml_runtime::Session* session, ggml_runtime::TensorBag output_tensors, ggml_runtime::TensorContainer* session_tensor_container)
     {
-        auto output = output_tensors.get_tensor(0);
-        printf("Output size: %lld, %lld, %lld, %lld\n", output.tensor->ne[0], output.tensor->ne[1], output.tensor->ne[2], output.tensor->ne[3]);
-        //ggml_backend_tensor_get(output, data, 0, sizeof(float) * input_size);
-        auto output_bytes = ggml_nbytes(output.tensor);
-        auto buffer = std::vector<char>(output_bytes);
-        ggml_backend_tensor_get(output.tensor, buffer.data(), 0, output_bytes);
-        GGMLF_LOG_DATA(output.tensor, buffer.data());
+        for (int i = 0; i < output_tensors.tensor_count(); i++)
+        {
+            auto output = output_tensors.get_tensor(i);
+            printf("Output size: %lld, %lld, %lld, %lld\n", output.tensor->ne[0], output.tensor->ne[1], output.tensor->ne[2], output.tensor->ne[3]);
+            //ggml_backend_tensor_get(output, data, 0, sizeof(float) * input_size);
+            auto output_bytes = ggml_nbytes(output.tensor);
+            auto buffer = std::vector<char>(output_bytes);
+            ggml_backend_tensor_get(output.tensor, buffer.data(), 0, output_bytes);
+            GGMLF_LOG_DATA(output.tensor, buffer.data());
+            GGMLF_LOG_INFO("output tensor buft: %s\n", output.buft->iface.get_name(output.buft));
+        }
     };
 
-    //for (int i = 0; i < 10000; i++)
+    for (int i = 0; i < 2; i++)
     {
         session.run(
             input_fn,

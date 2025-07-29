@@ -20,6 +20,7 @@ namespace ggml_runtime
         explicit GGUFLoader(const std::string& path);
         ~GGUFLoader() = default;
         const char* get_tensor_file_data(const std::string& tensor_name, size_t size);
+        ggml_type get_tensor_type(const std::string& tensor_name);
 
     private:
         std::string m_path;

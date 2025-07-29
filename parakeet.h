@@ -13,20 +13,64 @@ class SubSampling : public ggml_runtime::Module
     public:
         SubSampling(std::string  name): name(std::move(name))
         {
-            m_conv2d = new ggml_runtime::Conv2D(
-                this->name + ".0",
+            // TODO: support general subsampling logic
+            auto sampling_num = 2;
+            auto conv_channels = 256;
+            auto kernel_size = 3;
+            auto stride = 2;
+            auto padding = 1;
+            int layer_index = 0;
+            int feature_out = 1024;
+            int out_length = 16;
+
+            conv = new ggml_runtime::SequenceModule(this->name + ".conv");
+
+            conv->modules.push_back(new ggml_runtime::Conv2D(
+                this->name + ".conv." + std::to_string(layer_index),
                 1,
-                256,
-                3,
-                2,
-                1);
-            m_relu = new ggml_runtime::ReLU(
-                this->name + ".1");
+                conv_channels,
+                kernel_size,
+                stride,
+                padding));
+
+            layer_index++;
+            conv->modules.push_back(new ggml_runtime::ReLU(
+                this->name + ".conv." + std::to_string(layer_index)));
+
+            for (int i = 0; i < sampling_num; i++)
+            {
+                layer_index++;
+                conv->modules.push_back(new ggml_runtime::Conv2DDW(
+                    this->name + ".conv." + std::to_string(layer_index),
+                    conv_channels,
+                    conv_channels,
+                    kernel_size,
+                    stride,
+                    padding));
+
+                layer_index++;
+                conv->modules.push_back(new ggml_runtime::Conv2D(
+                    this->name + ".conv." + std::to_string(layer_index),
+                    conv_channels,
+                    conv_channels,
+                    1,
+                    1,
+                    0));
+
+                layer_index++;
+                conv->modules.push_back(new ggml_runtime::ReLU(
+                    this->name + ".conv." + std::to_string(layer_index)));
+            }
+
+            out = new ggml_runtime::Linear(
+                this->name + ".out",
+                conv_channels * out_length,
+                feature_out);
         };
         ~SubSampling()
         {
-            delete m_conv2d;
-            delete m_relu;
+            delete conv;
+            delete out;
         }
 
     int tensor_count() override;
@@ -42,7 +86,128 @@ class SubSampling : public ggml_runtime::Module
 
     private:
         std::string name;
-        ggml_runtime::Conv2D* m_conv2d;
-        ggml_runtime::ReLU* m_relu;
+        ggml_runtime::SequenceModule* conv;
+        ggml_runtime::Linear* out;
 };
 
+class ConformerFeedForward: public ggml_runtime::Module
+{
+public:
+    ConformerFeedForward(
+        const std::string& name,
+        int d_model,
+        int d_ff,
+        float dropout_p,
+        bool use_bias=true): name(name), d_model(d_model), d_ff(d_ff), dropout_p(dropout_p), use_bias(use_bias)
+    {
+        name_linear1 = name + ".linear1";
+        name_linear2 = name + ".linear2";
+        linear1 = new ggml_runtime::Linear(
+            name_linear1,
+            d_model,
+            d_ff,
+            use_bias);
+        linear2 = new ggml_runtime::Linear(
+            name_linear2,
+            d_ff,
+            d_model,
+            use_bias);
+    }
+    ~ConformerFeedForward()
+    {
+        delete linear1;
+        delete linear2;
+    }
+
+    int tensor_count() override;
+    void define_tensors(ggml_runtime::Session* session) override;
+    ggml_runtime::TensorBag build_graph(
+        ggml_runtime::Session* session,
+        ggml_runtime::TensorBag input_tensors,
+        ggml_runtime::TensorContainer* session_tensor_container) override;
+    void set_data(ggml_runtime::Session* session) override;
+
+private:
+    std::string name;
+    std::string name_linear1;
+    std::string name_linear2;
+    int d_model;
+    int d_ff;
+    float dropout_p;
+    bool use_bias = true;
+    ggml_runtime::Linear* linear1;
+    ggml_runtime::Linear* linear2;
+};
+
+class ConFormerLayer: public ggml_runtime::Module
+{
+public:
+    ConFormerLayer(const std::string& name, int d_model, bool use_bias=true):
+    name(name), d_model(d_model), use_bias(use_bias)
+    {
+        int64_t input_shape[4] = {d_model, 1, 1, 1};
+        norm_feed_forward1 = new ggml_runtime::LayerNorm(
+            name + ".norm_feed_forward1",
+            input_shape);
+        feed_forward1 = new ConformerFeedForward(
+            name + ".feed_forward1",
+            d_model,
+            4096,
+            0.1,
+            use_bias);
+    };
+    ~ConFormerLayer()
+    {
+        delete norm_feed_forward1;
+        delete feed_forward1;
+    };
+
+    int tensor_count() override;
+    void define_tensors(ggml_runtime::Session *session) override;
+    ggml_runtime::TensorBag build_graph(
+        ggml_runtime::Session *session,
+        ggml_runtime::TensorBag input_tensors,
+        ggml_runtime::TensorContainer *session_tensor_container) override;
+    void set_data(ggml_runtime::Session *session) override;
+
+private:
+    std::string name;
+    int d_model;
+    bool use_bias = true;
+    ggml_runtime::LayerNorm* norm_feed_forward1;
+    ConformerFeedForward* feed_forward1;
+};
+
+class ConFormer: public ggml_runtime::Module
+{
+public:
+    ConFormer(std::string name): name(std::move(name))
+    {
+        d_model = 1024;
+        bool use_bias = false;
+        pre_encode = new SubSampling(this->name + ".pre_encode");
+        pos_enc = new ggml_runtime::RelPositionalEncoding(this->name + ".pos_enc", 1024, 5000);
+        layers_0 = new ConFormerLayer(this->name + ".layers.0", d_model, use_bias);
+    };
+    ~ConFormer()
+    {
+        delete pre_encode;
+        delete pos_enc;
+        delete layers_0;
+    };
+
+    int tensor_count() override;
+    void define_tensors(ggml_runtime::Session *session) override;
+    ggml_runtime::TensorBag build_graph(
+        ggml_runtime::Session *session,
+        ggml_runtime::TensorBag input_tensors,
+        ggml_runtime::TensorContainer *session_tensor_container) override;
+    void set_data(ggml_runtime::Session *session) override;
+
+private:
+    std::string name;
+    int d_model;
+    SubSampling* pre_encode;
+    ggml_runtime::RelPositionalEncoding* pos_enc;
+    ConFormerLayer* layers_0;
+};

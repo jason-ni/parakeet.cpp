@@ -46,10 +46,9 @@ namespace ggml_runtime
             ~TensorBag() = default;
 
             void add_tensor(ggml_bf_tensor tensor);
-
             ggml_bf_tensor get_tensor(size_t index) const;
-
             size_t tensor_count() const;
+            void set_first_tensor(ggml_bf_tensor tensor);
         private:
             std::vector<ggml_bf_tensor> tensors;
     };
@@ -120,6 +119,9 @@ namespace ggml_runtime
         void allocate_tensors_on_backend_buffers();
         void free_temp_ctx();
         ggml_bf_tensor get_tensor_by_name(const std::string& name);
+        bool has_tensor_by_name(const std::string& name);
+
+        void cache_tensor(std::string name, ggml_bf_tensor tensor);
 
         ggml_bf_tensor create_tensor_1d(
             std::string name,
@@ -150,6 +152,8 @@ namespace ggml_runtime
             int64_t ne1,
             int64_t ne2,
             int64_t ne3);
+
+        void dump_tensors();
 
     private:
         size_t max_n_tensors;
@@ -182,7 +186,7 @@ namespace ggml_runtime
             void run(
                 std::function<TensorBag(Session*, TensorContainer*)> define_input_tensors,
                 std::function<void(Session*, TensorContainer*)> set_input_data,
-                std::function<void(Session*, TensorBag)> return_output
+                std::function<void(Session*, TensorBag, TensorContainer*)> return_output
                 );
 
             ggml_context* get_cpu_ctx();

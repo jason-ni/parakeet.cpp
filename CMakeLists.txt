@@ -17,9 +17,9 @@ add_executable(parakeet_cpp main.cpp
         parakeet.h)
 
 target_include_directories(parakeet_cpp PUBLIC
-        /Users/jason/prj/whisper.cpp/ggml/include
-        /Users/jason/prj/whisper.cpp/ggml/src
-        /Users/jason/prj/whisper.cpp/include
+        /Users/jason/prj/ggml/include
+        /Users/jason/prj/ggml/src
+        /Users/jason/prj/include
 )
 target_link_directories(parakeet_cpp PUBLIC /Users/jason/prj/libs/ggml_debug)
 target_link_libraries(parakeet_cpp PUBLIC ggml ggml-base ggml-cpu ggml-blas ggml-metal)

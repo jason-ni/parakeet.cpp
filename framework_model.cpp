@@ -276,4 +276,14 @@ namespace ggml_runtime
         return m_tensor_buffer.data();
     }
 
+    ggml_type GGUFLoader::get_tensor_type(const std::string& tensor_name)
+    {
+        auto it = m_tensor_infos.find(tensor_name);
+        if (it == m_tensor_infos.end()) {
+            throw std::runtime_error("Tensor not found: " + tensor_name);
+        }
+        auto tensor_info = it->second;
+        return std::get<0>(tensor_info);
+    }
+
 }
