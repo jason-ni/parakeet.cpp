@@ -68,12 +68,12 @@ namespace ggml_runtime
         auto weight_data_size = ggml_nbytes(weight_tensor.tensor);
         auto tensor_data = session->gguf_loader->get_tensor_file_data(weight_name, weight_data_size);
         ggml_backend_tensor_set(weight_tensor.tensor, tensor_data, 0, weight_data_size);
-        GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
 
         auto bias_data_size = ggml_nbytes(bias_tensor.tensor);
         tensor_data = session->gguf_loader->get_tensor_file_data(bias_name, bias_data_size);
         ggml_backend_tensor_set(bias_tensor.tensor, tensor_data, 0, bias_data_size);
-        GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
     }
 
     int ReLU::tensor_count()
@@ -157,12 +157,12 @@ namespace ggml_runtime
         std::vector<char> tensor_fp16_data = std::vector<char>(weight_data_size);
         ggml_fp32_to_fp16_row((float*)tensor_data, (ggml_fp16_t*)tensor_fp16_data.data(), weight_data_size / 2);
         ggml_backend_tensor_set(weight_tensor.tensor, tensor_fp16_data.data(), 0, weight_data_size);
-        GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
 
         auto bias_data_size = ggml_nbytes(bias_tensor.tensor);
         tensor_data = session->gguf_loader->get_tensor_file_data(bias_name, bias_data_size);
         ggml_backend_tensor_set(bias_tensor.tensor, tensor_data, 0, bias_data_size);
-        GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
     }
 
     int SequenceModule::tensor_count()
@@ -230,12 +230,14 @@ namespace ggml_runtime
         ggml_bf_tensor weight_tensor = session->model_tensor_container->get_tensor_by_name(weight_name);
         ggml_bf_context bf_ctx = session_tensor_container->get_ctx_of_buffer_type(weight_tensor.buft);
 
+        /*
         GGMLF_LOG_INFO("linear(%s) input tensor shape: %lld, %lld, %lld, %lld\n",
             name.c_str(),
             input_tensor.tensor->ne[0], input_tensor.tensor->ne[1], input_tensor.tensor->ne[2], input_tensor.tensor->ne[3]);
         GGMLF_LOG_INFO("linear(%s) weight tensor ne: %lld, %lld, %lld, %lld\n",
             name.c_str(),
             weight_tensor.tensor->ne[0], weight_tensor.tensor->ne[1], weight_tensor.tensor->ne[2], weight_tensor.tensor->ne[3]);
+            */
         ggml_tensor* matmul_ret = ggml_mul_mat(
             bf_ctx.ctx,
             weight_tensor.tensor,
@@ -267,7 +269,7 @@ namespace ggml_runtime
         auto weight_data_size = ggml_nbytes(weight_tensor.tensor);
         auto tensor_data = session->gguf_loader->get_tensor_file_data(weight_name, weight_data_size);
         ggml_backend_tensor_set(weight_tensor.tensor, tensor_data, 0, weight_data_size);
-        GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
 
         if (use_bias)
         {
@@ -281,14 +283,14 @@ namespace ggml_runtime
             auto bias_data_size = ggml_nbytes(bias_tensor.tensor);
             tensor_data = session->gguf_loader->get_tensor_file_data(bias_name, bias_data_size);
             ggml_backend_tensor_set(bias_tensor.tensor, tensor_data, 0, bias_data_size);
-            GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
+            //GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
         }
 
     }
 
     int RelPositionalEncoding::tensor_count()
     {
-        return 16;
+        return 32;
     }
 
     void RelPositionalEncoding::define_tensors(Session* session)
@@ -315,18 +317,20 @@ namespace ggml_runtime
             2);
     }
 
-    ggml_bf_tensor RelPositionalEncoding::get_pe_tensor(Session* session)
+    ggml_bf_tensor RelPositionalEncoding::get_pe_tensor(Session* session, TensorContainer* session_tensor_container)
     {
+        /*
         if (session->model_tensor_container->has_tensor_by_name(pe_name))
         {
             //GGMLF_LOG_INFO("pe(%s) tensor already exists, skip building\n", pe_name.c_str());
             return session->model_tensor_container->get_tensor_by_name(pe_name);
         } else
+        */
         {
             //GGMLF_LOG_INFO("pe(%s) tensor not exists, build it\n", pe_name.c_str());
             ggml_bf_tensor div_term_tensor = session->model_tensor_container->get_tensor_by_name(name + ".div_term");
             ggml_bf_tensor positions_tensor = session->model_tensor_container->get_tensor_by_name(name + ".positions");
-            ggml_bf_context bf_ctx = session->model_tensor_container->get_ctx_of_buffer_type(div_term_tensor.buft);
+            ggml_bf_context bf_ctx = session_tensor_container->get_ctx_of_buffer_type(div_term_tensor.buft);
             auto grid_tensor = ggml_out_prod(
                 bf_ctx.ctx,
                 div_term_tensor.tensor,
@@ -396,14 +400,10 @@ namespace ggml_runtime
     TensorBag RelPositionalEncoding::build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container)
     {
         auto input_tensor = input_tensors.get_tensor(0);
-        GGMLF_LOG_INFO("rel pos encoding(%s) input tensor shape: %lld, %lld\n",
-            name.c_str(), input_tensor.tensor->ne[0], input_tensor.tensor->ne[1]);
         int feature_len = input_tensor.tensor->ne[1];
 
-        auto pe_tensor = get_pe_tensor(session);
+        auto pe_tensor = get_pe_tensor(session, session_tensor_container);
         auto bf_ctx = session->model_tensor_container->get_ctx_of_buffer_type(pe_tensor.buft);
-        GGMLF_LOG_INFO("rel pos encoding(%s) pe tensor shape: %lld, %lld\n",
-            name.c_str(), pe_tensor.tensor->ne[0], pe_tensor.tensor->ne[1]);
         auto center_pos = max_len;
         auto start_pos = center_pos - feature_len;
         auto end_pos = center_pos + feature_len - 1;
@@ -411,8 +411,8 @@ namespace ggml_runtime
         auto new_ne1 = end_pos - start_pos;
         auto new_nb1 = input_tensor.tensor->nb[1];
         auto offset = start_pos * input_tensor.tensor->nb[1];
-        GGMLF_LOG_INFO("rel pos encoding(%s) pos_embd tensor shape: %lld, %d, %zu, %zu\n",
-            name.c_str(), new_ne0, new_ne1, new_nb1, offset);
+        //GGMLF_LOG_INFO("rel pos encoding(%s) pos_embd tensor shape: %lld, %d, %zu, %zu\n",
+        //    name.c_str(), new_ne0, new_ne1, new_nb1, offset);
         auto pos_embd = ggml_view_2d(
             bf_ctx.ctx,
             pe_tensor.tensor,
@@ -420,10 +420,7 @@ namespace ggml_runtime
             new_ne1,
             new_nb1,
             offset);
-        auto dup_pos_embd = ggml_dup_tensor(
-            bf_ctx.ctx, pos_embd);
-        auto cpy_pos_embd = ggml_cpy(bf_ctx.ctx, pos_embd, dup_pos_embd);
-        input_tensors.add_tensor(ggml_bf_tensor(cpy_pos_embd, bf_ctx.buft));
+        input_tensors.add_tensor(ggml_bf_tensor(pos_embd, bf_ctx.buft));
 
         return input_tensors;
     }
@@ -440,7 +437,7 @@ namespace ggml_runtime
         }
         auto div_term_tensor = session->model_tensor_container->get_tensor_by_name(name + ".div_term");
         ggml_backend_tensor_set(div_term_tensor.tensor, buffer.data(), 0, d_model/2 * sizeof(float));
-        GGMLF_LOG_DATA(div_term_tensor.tensor, buffer.data());
+        //GGMLF_LOG_DATA(div_term_tensor.tensor, buffer.data());
 
         auto positions_tensor = session->model_tensor_container->get_tensor_by_name(name + ".positions");
         for (int i = max_len-1; i > -max_len; i--)
@@ -448,7 +445,7 @@ namespace ggml_runtime
             data[max_len-1 - i] = (float)i;
         }
         ggml_backend_tensor_set(positions_tensor.tensor, buffer.data(), 0, (2*max_len-1) * sizeof(float));
-        GGMLF_LOG_DATA(positions_tensor.tensor, buffer.data());
+        //GGMLF_LOG_DATA(positions_tensor.tensor, buffer.data());
 
         auto interleave_1_tensor = session->model_tensor_container->get_tensor_by_name(name + ".interleave_1");
         data[0] = 0.0f;
@@ -518,12 +515,12 @@ namespace ggml_runtime
         auto weight_data_size = ggml_nbytes(weight_tensor.tensor);
         auto tensor_data = session->gguf_loader->get_tensor_file_data(weight_name, weight_data_size);
         ggml_backend_tensor_set(weight_tensor.tensor, tensor_data, 0, weight_data_size);
-        GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
 
         auto bias_data_size = ggml_nbytes(bias_tensor.tensor);
         tensor_data = session->gguf_loader->get_tensor_file_data(bias_name, bias_data_size);
         ggml_backend_tensor_set(bias_tensor.tensor, tensor_data, 0, bias_data_size);
-        GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
     }
 
     int RelPositionMultiHeadAttention::tensor_count()
@@ -600,33 +597,25 @@ namespace ggml_runtime
                 0, 2, 1, 3);
 
         auto linear_pos_input_bag = TensorBag();
-        auto model_container_bf_ctx = session->model_tensor_container->get_ctx_of_buffer_type(pos_emb_tensor.buft);
-        auto cont_pos_emb_tensor = ggml_dup_tensor(
-            model_container_bf_ctx.ctx, pos_emb_tensor.tensor);
         auto pos_emb_transpose = ggml_reshape_4d(
-            model_container_bf_ctx.ctx,
-            cont_pos_emb_tensor,
+            bf_ctx.ctx,
+            pos_emb_tensor.tensor,
             pos_emb_tensor.tensor->ne[0],
             1,
             pos_emb_tensor.tensor->ne[1],
             pos_emb_tensor.tensor->ne[2]);
-        linear_pos_input_bag.add_tensor(ggml_bf_tensor(pos_emb_transpose, pos_emb_tensor.buft));
+        linear_pos_input_bag.add_tensor(ggml_bf_tensor(pos_emb_transpose, bf_ctx.buft));
         auto pos_linear_out = linear_pos->build_graph(session, linear_pos_input_bag, session_tensor_container);
+        auto pos_linear_out_tensor = pos_linear_out.get_tensor(0);
+        auto pos_linear_compact = ggml_reshape_3d(
+            bf_ctx.ctx,
+            pos_linear_out_tensor.tensor,
+            pos_linear_out_tensor.tensor->ne[0],
+            pos_linear_out_tensor.tensor->ne[2],
+            pos_linear_out_tensor.tensor->ne[3]);
 
         auto out_bag = TensorBag();
-        out_bag.add_tensor(ggml_bf_tensor(q_multi_head, bf_ctx.buft));
-        out_bag.add_tensor(ggml_bf_tensor(k_multi_head, bf_ctx.buft));
-        out_bag.add_tensor(ggml_bf_tensor(v_multi_head, bf_ctx.buft));
-        out_bag.add_tensor(pos_emb_tensor);
-        //out_bag.add_tensor(pos_linear_out.get_tensor(0));
-        //out_bag.add_tensor(ggml_bf_tensor(pos_linear_out.get_tensor(0).tensor, model_container_bf_ctx.buft));
-        /*
-        GGMLF_LOG_INFO("pos_linear_out tensor shape: %lld, %lld, %lld, %lld\n",
-            pos_linear_out.get_tensor(0).tensor->ne[0],
-            pos_linear_out.get_tensor(0).tensor->ne[1],
-            pos_linear_out.get_tensor(0).tensor->ne[2],
-            pos_linear_out.get_tensor(0).tensor->ne[3]);
-            */
+        out_bag.add_tensor(ggml_bf_tensor(pos_linear_compact, bf_ctx.buft));
 
         return out_bag;
     }
@@ -639,12 +628,12 @@ namespace ggml_runtime
         auto pos_bias_u_data_size = ggml_nbytes(pos_bias_u_tensor.tensor);
         auto tensor_data = session->gguf_loader->get_tensor_file_data(pos_bias_u_name, pos_bias_u_data_size);
         ggml_backend_tensor_set(pos_bias_u_tensor.tensor, tensor_data, 0, pos_bias_u_data_size);
-        GGMLF_LOG_DATA(pos_bias_u_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(pos_bias_u_tensor.tensor, tensor_data);
 
         auto pos_bias_v_data_size = ggml_nbytes(pos_bias_v_tensor.tensor);
         tensor_data = session->gguf_loader->get_tensor_file_data(pos_bias_v_name, pos_bias_v_data_size);
         ggml_backend_tensor_set(pos_bias_v_tensor.tensor, tensor_data, 0, pos_bias_v_data_size);
-        GGMLF_LOG_DATA(pos_bias_v_tensor.tensor, tensor_data);
+        //GGMLF_LOG_DATA(pos_bias_v_tensor.tensor, tensor_data);
 
         linear_q->set_data(session);
         linear_k->set_data(session);

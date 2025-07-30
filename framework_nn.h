@@ -196,7 +196,7 @@ namespace ggml_runtime
         int d_model;
         int max_len;
 
-        ggml_bf_tensor get_pe_tensor(Session* session);
+        ggml_bf_tensor get_pe_tensor(Session* session, TensorContainer* session_tensor_container);
     };
 
     class LayerNorm : public Module

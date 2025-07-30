@@ -199,8 +199,6 @@ int main()
         for (int i = 0; i < output_tensors.tensor_count(); i++)
         {
             auto output = output_tensors.get_tensor(i);
-            printf("Output size: %lld, %lld, %lld, %lld\n", output.tensor->ne[0], output.tensor->ne[1], output.tensor->ne[2], output.tensor->ne[3]);
-            //ggml_backend_tensor_get(output, data, 0, sizeof(float) * input_size);
             auto output_bytes = ggml_nbytes(output.tensor);
             auto buffer = std::vector<char>(output_bytes);
             ggml_backend_tensor_get(output.tensor, buffer.data(), 0, output_bytes);
@@ -209,13 +207,17 @@ int main()
         }
     };
 
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 10; i++)
     {
+        auto before_time = std::chrono::high_resolution_clock::now();
         session.run(
             input_fn,
             set_data_fn,
             output_fn
             );
+        auto after_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(after_time - before_time).count();
+        printf("duration: %lld\n", duration);
         //std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 

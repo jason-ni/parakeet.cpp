@@ -373,9 +373,11 @@ namespace ggml_runtime
                 "failed to find a compatible buffer type for tensor %s",
                 ggmlf_tensor_info_mapping.at(tensor_type)));
         }
+        /*
         GGMLF_LOG_INFO("Using %s buffer for tensor %s\n",
             buft->iface.get_name(buft),
             name.c_str());
+            */
 
         ggml_bf_context bf_ctx = get_ctx_of_buffer_type(buft);
         ggml_tensor * tensor = ggml_dup_tensor(bf_ctx.ctx, meta);
@@ -581,7 +583,7 @@ namespace ggml_runtime
             throw std::runtime_error("failed to allocate graph");
         }
 
-        if (!ggml_graph_compute_helper(sched, gf, 1))
+        if (!ggml_graph_compute_helper(sched, gf, 4))
         {
             GGMLF_LOG_ERROR("Failed to compute graph\n");
             throw std::runtime_error("failed to compute graph");
@@ -610,8 +612,7 @@ namespace ggml_runtime
     void Session::run(
                 std::function<TensorBag(Session*, TensorContainer*)> define_input_tensors,
                 std::function<void(Session*, TensorContainer*)> set_input_data,
-                std::function<void(Session*, TensorBag, TensorContainer*)> return_output
-                )
+                std::function<void(Session*, TensorBag, TensorContainer*)> return_output)
     {
         std::unique_ptr<TensorContainer>  session_tensor_container = std::make_unique<TensorContainer>(
             buft_list, root_module->tensor_count());

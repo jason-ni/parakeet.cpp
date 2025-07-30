@@ -32,8 +32,8 @@ ggml_runtime::TensorBag SubSampling::build_graph(ggml_runtime::Session* session,
         const_tensor->ne[3],
         1
     );
-    GGMLF_LOG_INFO("reshape_tensor shape: %lld %lld %lld %lld\n",
-        reshape_tensor->ne[0], reshape_tensor->ne[1], reshape_tensor->ne[2], reshape_tensor->ne[3]);
+    //GGMLF_LOG_INFO("reshape_tensor shape: %lld %lld %lld %lld\n",
+    //    reshape_tensor->ne[0], reshape_tensor->ne[1], reshape_tensor->ne[2], reshape_tensor->ne[3]);
     ggml_runtime::TensorBag output_tensors;
     output_tensors.add_tensor(ggml_runtime::ggml_bf_tensor(reshape_tensor, buft_ctx.buft));
     return out->build_graph(session, output_tensors, session_tensor_container);
