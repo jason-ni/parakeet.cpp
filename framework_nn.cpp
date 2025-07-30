@@ -380,7 +380,7 @@ namespace ggml_runtime
                 sin_grid_interleave_2_tensor->ne[0] * sin_grid_interleave_2_tensor->ne[1] * sin_grid_interleave_2_tensor->ne[2] ,
                 sin_grid_interleave_2_tensor->ne[3]);
 
-            auto pe_tensor = ggml_add(
+            auto pe_tensor = ggml_add_inplace(
                 bf_ctx.ctx,
                 cos_grid_interleave_1_compact_tensor,
                 sin_grid_interleave_2_compact_tensor);
@@ -420,8 +420,10 @@ namespace ggml_runtime
             new_ne1,
             new_nb1,
             offset);
-        // No dropout for pe
-        input_tensors.add_tensor(ggml_bf_tensor(pos_embd, bf_ctx.buft));
+        auto dup_pos_embd = ggml_dup_tensor(
+            bf_ctx.ctx, pos_embd);
+        auto cpy_pos_embd = ggml_cpy(bf_ctx.ctx, pos_embd, dup_pos_embd);
+        input_tensors.add_tensor(ggml_bf_tensor(cpy_pos_embd, bf_ctx.buft));
 
         return input_tensors;
     }
@@ -524,4 +526,130 @@ namespace ggml_runtime
         GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
     }
 
+    int RelPositionMultiHeadAttention::tensor_count()
+    {
+        return 16;
+    }
+
+    void RelPositionMultiHeadAttention::define_tensors(Session* session)
+    {
+        session->model_tensor_container->create_tensor_4d(
+            pos_bias_u_name,
+            GGMLF_TENSOR_OUTPUT,
+            GGML_TYPE_F32,
+            n_head, d_k, 1, 1);
+        session->model_tensor_container->create_tensor_4d(
+            pos_bias_v_name,
+            GGMLF_TENSOR_OUTPUT,
+            GGML_TYPE_F32,
+            n_head, d_k, 1, 1);
+        linear_q->define_tensors(session);
+        linear_k->define_tensors(session);
+        linear_v->define_tensors(session);
+        linear_pos->define_tensors(session);
+        linear_out->define_tensors(session);
+    }
+
+    TensorBag RelPositionMultiHeadAttention::build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container)
+    {
+        auto q_tensor = input_tensors.get_tensor(0);
+        auto k_tensor = input_tensors.get_tensor(0);
+        auto v_tensor = input_tensors.get_tensor(0);
+        auto pos_emb_tensor = input_tensors.get_tensor(1);
+
+        auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(q_tensor.buft);
+
+        auto q_bag = TensorBag();
+        q_bag.add_tensor(q_tensor);
+        auto k_bag = TensorBag();
+        k_bag.add_tensor(k_tensor);
+        auto v_bag = TensorBag();
+        v_bag.add_tensor(v_tensor);
+
+        auto q_linear_out = linear_q->build_graph(session, q_bag, session_tensor_container);
+        auto k_linear_out = linear_k->build_graph(session, k_bag, session_tensor_container);
+        auto v_linear_out = linear_v->build_graph(session, v_bag, session_tensor_container);
+
+        auto q_tensor_linear = q_linear_out.get_tensor(0);
+        auto q_multi_head = ggml_reshape_4d(
+            bf_ctx.ctx,
+            q_tensor_linear.tensor,
+            d_k,
+            n_head,
+            q_tensor_linear.tensor->ne[1],
+            q_tensor_linear.tensor->ne[2]);
+        auto k_tensor_linear = k_linear_out.get_tensor(0);
+        auto k_multi_head = ggml_permute(bf_ctx.ctx,
+            ggml_reshape_4d(
+                bf_ctx.ctx,
+                k_tensor_linear.tensor,
+                d_k,
+                n_head,
+                k_tensor_linear.tensor->ne[1],
+                k_tensor_linear.tensor->ne[2]),
+                0, 2, 1, 3);
+        auto v_tensor_linear = v_linear_out.get_tensor(0);
+        auto v_multi_head = ggml_permute(bf_ctx.ctx,
+            ggml_reshape_4d(
+                bf_ctx.ctx,
+                v_tensor_linear.tensor,
+                d_k,
+                n_head,
+                v_tensor_linear.tensor->ne[1],
+                v_tensor_linear.tensor->ne[2]),
+                0, 2, 1, 3);
+
+        auto linear_pos_input_bag = TensorBag();
+        auto model_container_bf_ctx = session->model_tensor_container->get_ctx_of_buffer_type(pos_emb_tensor.buft);
+        auto cont_pos_emb_tensor = ggml_dup_tensor(
+            model_container_bf_ctx.ctx, pos_emb_tensor.tensor);
+        auto pos_emb_transpose = ggml_reshape_4d(
+            model_container_bf_ctx.ctx,
+            cont_pos_emb_tensor,
+            pos_emb_tensor.tensor->ne[0],
+            1,
+            pos_emb_tensor.tensor->ne[1],
+            pos_emb_tensor.tensor->ne[2]);
+        linear_pos_input_bag.add_tensor(ggml_bf_tensor(pos_emb_transpose, pos_emb_tensor.buft));
+        auto pos_linear_out = linear_pos->build_graph(session, linear_pos_input_bag, session_tensor_container);
+
+        auto out_bag = TensorBag();
+        out_bag.add_tensor(ggml_bf_tensor(q_multi_head, bf_ctx.buft));
+        out_bag.add_tensor(ggml_bf_tensor(k_multi_head, bf_ctx.buft));
+        out_bag.add_tensor(ggml_bf_tensor(v_multi_head, bf_ctx.buft));
+        out_bag.add_tensor(pos_emb_tensor);
+        //out_bag.add_tensor(pos_linear_out.get_tensor(0));
+        //out_bag.add_tensor(ggml_bf_tensor(pos_linear_out.get_tensor(0).tensor, model_container_bf_ctx.buft));
+        /*
+        GGMLF_LOG_INFO("pos_linear_out tensor shape: %lld, %lld, %lld, %lld\n",
+            pos_linear_out.get_tensor(0).tensor->ne[0],
+            pos_linear_out.get_tensor(0).tensor->ne[1],
+            pos_linear_out.get_tensor(0).tensor->ne[2],
+            pos_linear_out.get_tensor(0).tensor->ne[3]);
+            */
+
+        return out_bag;
+    }
+
+    void RelPositionMultiHeadAttention::set_data(Session* session)
+    {
+        ggml_bf_tensor pos_bias_u_tensor = session->model_tensor_container->get_tensor_by_name(pos_bias_u_name);
+        ggml_bf_tensor pos_bias_v_tensor = session->model_tensor_container->get_tensor_by_name(pos_bias_v_name);
+
+        auto pos_bias_u_data_size = ggml_nbytes(pos_bias_u_tensor.tensor);
+        auto tensor_data = session->gguf_loader->get_tensor_file_data(pos_bias_u_name, pos_bias_u_data_size);
+        ggml_backend_tensor_set(pos_bias_u_tensor.tensor, tensor_data, 0, pos_bias_u_data_size);
+        GGMLF_LOG_DATA(pos_bias_u_tensor.tensor, tensor_data);
+
+        auto pos_bias_v_data_size = ggml_nbytes(pos_bias_v_tensor.tensor);
+        tensor_data = session->gguf_loader->get_tensor_file_data(pos_bias_v_name, pos_bias_v_data_size);
+        ggml_backend_tensor_set(pos_bias_v_tensor.tensor, tensor_data, 0, pos_bias_v_data_size);
+        GGMLF_LOG_DATA(pos_bias_v_tensor.tensor, tensor_data);
+
+        linear_q->set_data(session);
+        linear_k->set_data(session);
+        linear_v->set_data(session);
+        linear_pos->set_data(session);
+        linear_out->set_data(session);
+    }
 }

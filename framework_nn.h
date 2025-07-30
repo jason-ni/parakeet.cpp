@@ -230,4 +230,55 @@ namespace ggml_runtime
         int64_t input_shape[GGML_MAX_DIMS] = {0};
     };
 
+    class RelPositionMultiHeadAttention : public Module
+    {
+    public:
+        RelPositionMultiHeadAttention(
+            const std::string& name,
+            int n_head,
+            int n_feat,
+            bool use_bias = true):
+        name(name), n_head(n_head), n_feat(n_feat), use_bias(use_bias)
+        {
+            d_k = n_feat / n_head;
+            pos_bias_u_name = this->name + ".pos_bias_u";
+            pos_bias_v_name = this->name + ".pos_bias_v";
+
+            linear_q = new Linear(this->name + ".linear_q", n_feat, n_feat, use_bias);
+            linear_k = new Linear(this->name + ".linear_k", n_feat, n_feat, use_bias);
+            linear_v = new Linear(this->name + ".linear_v", n_feat, n_feat, use_bias);
+            linear_out = new Linear(this->name + ".linear_out", n_feat, n_feat, use_bias);
+            linear_pos = new Linear(this->name + ".linear_pos", n_feat, n_feat, use_bias);
+        };
+        ~RelPositionMultiHeadAttention()
+        {
+            delete linear_q;
+            delete linear_k;
+            delete linear_v;
+            delete linear_out;
+            delete linear_pos;
+        };
+
+        int tensor_count()override;
+
+        void define_tensors(Session* session) override;
+
+        TensorBag build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container) override;
+
+        void set_data(Session* session) override;
+
+    private:
+        std::string name;
+        std::string pos_bias_u_name;
+        std::string pos_bias_v_name;
+        int n_head;
+        int n_feat;
+        int d_k;
+        bool use_bias;
+        Linear* linear_q;
+        Linear* linear_k;
+        Linear* linear_v;
+        Linear* linear_out;
+        Linear* linear_pos;
+    };
 }

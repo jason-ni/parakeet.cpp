@@ -139,6 +139,7 @@ private:
     ggml_runtime::Linear* linear2;
 };
 
+
 class ConFormerLayer: public ggml_runtime::Module
 {
 public:
@@ -155,11 +156,22 @@ public:
             4096,
             0.1,
             use_bias);
+        norm_self_attn = new ggml_runtime::LayerNorm(
+            name + ".norm_self_att",
+            input_shape);
+        self_attn = new ggml_runtime::RelPositionMultiHeadAttention(
+            name + ".self_attn",
+            8,
+            d_model,
+            false);
+
     };
     ~ConFormerLayer()
     {
         delete norm_feed_forward1;
         delete feed_forward1;
+        delete norm_self_attn;
+        delete self_attn;
     };
 
     int tensor_count() override;
@@ -176,6 +188,8 @@ private:
     bool use_bias = true;
     ggml_runtime::LayerNorm* norm_feed_forward1;
     ConformerFeedForward* feed_forward1;
+    ggml_runtime::LayerNorm* norm_self_attn;
+    ggml_runtime::RelPositionMultiHeadAttention* self_attn;
 };
 
 class ConFormer: public ggml_runtime::Module
