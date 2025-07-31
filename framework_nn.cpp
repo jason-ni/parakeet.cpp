@@ -534,12 +534,12 @@ namespace ggml_runtime
             pos_bias_u_name,
             GGMLF_TENSOR_OUTPUT,
             GGML_TYPE_F32,
-            n_head, d_k, 1, 1);
+            d_k, n_head, 1, 1);
         session->model_tensor_container->create_tensor_4d(
             pos_bias_v_name,
             GGMLF_TENSOR_OUTPUT,
             GGML_TYPE_F32,
-            n_head, d_k, 1, 1);
+            d_k, n_head, 1, 1);
         linear_q->define_tensors(session);
         linear_k->define_tensors(session);
         linear_v->define_tensors(session);
@@ -607,15 +607,51 @@ namespace ggml_runtime
         linear_pos_input_bag.add_tensor(ggml_bf_tensor(pos_emb_transpose, bf_ctx.buft));
         auto pos_linear_out = linear_pos->build_graph(session, linear_pos_input_bag, session_tensor_container);
         auto pos_linear_out_tensor = pos_linear_out.get_tensor(0);
-        auto pos_linear_compact = ggml_reshape_3d(
+        GGMLF_LOG_INFO("pos_linear_out_tensor shape: %lld, %lld, %lld, %lld\n",
+            pos_linear_out_tensor.tensor->ne[0], pos_linear_out_tensor.tensor->ne[1], pos_linear_out_tensor.tensor->ne[2], pos_linear_out_tensor.tensor->ne[3]);
+        auto p = ggml_reshape_3d(
             bf_ctx.ctx,
             pos_linear_out_tensor.tensor,
-            pos_linear_out_tensor.tensor->ne[0],
-            pos_linear_out_tensor.tensor->ne[2],
-            pos_linear_out_tensor.tensor->ne[3]);
+            d_k,
+            n_head,
+            pos_linear_out_tensor.tensor->ne[2]);
+
+        ggml_bf_tensor pos_bias_u_tensor = session->model_tensor_container->get_tensor_by_name(pos_bias_u_name);
+        ggml_bf_tensor pos_bias_v_tensor = session->model_tensor_container->get_tensor_by_name(pos_bias_v_name);
+
+        GGMLF_LOG_INFO("q_multi_head shape: %lld, %lld, %lld, %lld\n",
+            q_multi_head->ne[0], q_multi_head->ne[1], q_multi_head->ne[2], q_multi_head->ne[3]);
+        GGMLF_LOG_INFO("pos_bias_u_tensor shape: %lld, %lld, %lld, %lld\n",
+            pos_bias_u_tensor.tensor->ne[0], pos_bias_u_tensor.tensor->ne[1], pos_bias_u_tensor.tensor->ne[2], pos_bias_u_tensor.tensor->ne[3]);
+        auto q_with_bias_u_tensor = ggml_permute(
+            bf_ctx.ctx,
+            ggml_add(
+                bf_ctx.ctx,
+                q_multi_head,
+                pos_bias_u_tensor.tensor),
+            0, 2, 1, 3);
+
+        auto q_with_bias_v_tensor = ggml_permute(
+            bf_ctx.ctx,
+            ggml_add(
+                bf_ctx.ctx,
+                q_multi_head,
+                pos_bias_v_tensor.tensor),
+                0, 2, 1, 3);
+
+        GGMLF_LOG_INFO("q_with_bias_v_tensor shape: %lld, %lld, %lld, %lld\n",
+            q_with_bias_v_tensor->ne[0], q_with_bias_v_tensor->ne[1], q_with_bias_v_tensor->ne[2], q_with_bias_v_tensor->ne[3]);
+        GGMLF_LOG_INFO("p shape: %lld, %lld, %lld, %lld\n",
+            p->ne[0], p->ne[1], p->ne[2], p->ne[3]);
+        auto matrix_bd = ggml_mul_mat(
+            bf_ctx.ctx,
+            ggml_permute(bf_ctx.ctx, p, 0, 2, 1, 3),
+            q_with_bias_v_tensor);
+        auto matrix_bd_pad = ggml_pad(bf_ctx.ctx, matrix_bd, 1, 0, 0, 0);
 
         auto out_bag = TensorBag();
-        out_bag.add_tensor(ggml_bf_tensor(pos_linear_compact, bf_ctx.buft));
+        out_bag.add_tensor(ggml_bf_tensor(matrix_bd_pad, bf_ctx.buft));
+
 
         return out_bag;
     }
