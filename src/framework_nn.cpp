@@ -9,6 +9,102 @@
 
 namespace ggml_runtime
 {
+    int Conv1D::tensor_count()
+    {
+        return 3;
+    }
+
+    void Conv1D::define_tensors(Session* session)
+    {
+        if (is_dw)
+        {
+            this->weight = session->model_tensor_container->create_tensor_3d(
+                weight_name,
+                GGMLF_TENSOR_BIAS,
+                GGML_TYPE_F16,
+                kernel_size, in_channels, 1);
+        } else
+        {
+            this->weight = session->model_tensor_container->create_tensor_3d(
+                weight_name,
+                GGMLF_TENSOR_BIAS,
+                GGML_TYPE_F16,
+                kernel_size, in_channels, out_channels);
+        }
+        if (use_bias)
+        {
+            this->bias = session->model_tensor_container->create_tensor_1d(
+                bias_name,
+                GGMLF_TENSOR_BIAS,
+                GGML_TYPE_F32,
+                in_channels);
+        }
+    }
+
+    TensorBag Conv1D::build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container)
+    {
+        auto input_tensor = input_tensors.get_tensor(0);
+        auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(input_tensor.buft);
+
+        auto weight_tensor = session->model_tensor_container->get_tensor_by_name(weight_name);
+        ggml_tensor* out_tensor = nullptr;
+        if (is_dw)
+        {
+            out_tensor = ggml_conv_1d_dw(
+                bf_ctx.ctx,
+                weight_tensor.tensor,
+                input_tensor.tensor,
+                stride,
+                padding,
+                dilation);
+        } else
+        {
+            out_tensor = ggml_conv_1d(
+                bf_ctx.ctx,
+                weight_tensor.tensor,
+                input_tensor.tensor,
+                stride,
+                padding,
+                dilation);
+        }
+        if (use_bias)
+        {
+            auto bias_tensor = session->model_tensor_container->get_tensor_by_name(bias_name);
+            out_tensor = ggml_add(bf_ctx.ctx, out_tensor, bias_tensor.tensor);
+        }
+        TensorBag output_tensors;
+        output_tensors.add_tensor(ggml_bf_tensor(out_tensor, bf_ctx.buft));
+        return output_tensors;
+    }
+
+    void Conv1D::set_data(Session* session)
+    {
+        ggml_bf_tensor weight_tensor = session->model_tensor_container->get_tensor_by_name(weight_name);
+        ggml_type weight_tensor_type = session->gguf_loader->get_tensor_type(weight_name);
+        if (weight_tensor_type != GGML_TYPE_F32)
+        {
+            GGMLF_LOG_ERROR("conv_1d(%s) parameter %s type is not f32", name.c_str(), weight_name.c_str());
+        }
+        auto weight_data_size = ggml_nbytes(weight_tensor.tensor); // bytes of F16 data
+        auto tensor_data = session->gguf_loader->get_tensor_file_data(weight_name, weight_data_size*2);
+        std::vector<char> tensor_fp16_data = std::vector<char>(weight_data_size);
+        ggml_fp32_to_fp16_row((float*)tensor_data, (ggml_fp16_t*)tensor_fp16_data.data(), weight_data_size / 2);
+        ggml_backend_tensor_set(weight_tensor.tensor, tensor_fp16_data.data(), 0, weight_data_size);
+
+        if (use_bias)
+        {
+            ggml_bf_tensor bias_tensor = session->model_tensor_container->get_tensor_by_name(bias_name);
+            ggml_type bias_tensor_type = session->gguf_loader->get_tensor_type(bias_name);
+            if (bias_tensor_type != GGML_TYPE_F32)
+            {
+                GGMLF_LOG_ERROR("conv_1d(%s) parameter %s type is not f32", name.c_str(), bias_name.c_str());
+            }
+            auto bias_data_size = ggml_nbytes(bias_tensor.tensor);
+            tensor_data = session->gguf_loader->get_tensor_file_data(bias_name, bias_data_size);
+            ggml_backend_tensor_set(bias_tensor.tensor, tensor_data, 0, bias_data_size);
+        }
+    }
+
     int Conv2D::tensor_count()
     {
         return 5;
@@ -545,16 +641,37 @@ namespace ggml_runtime
         linear_v->define_tensors(session);
         linear_pos->define_tensors(session);
         linear_out->define_tensors(session);
+
+        session->model_tensor_container->create_tensor_4d(
+            name + ".k_fp16",
+            GGMLF_TENSOR_OUTPUT,
+            GGML_TYPE_F16,
+            d_k, 640, 8, 1);
     }
 
     TensorBag RelPositionMultiHeadAttention::build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container)
     {
-        auto q_tensor = input_tensors.get_tensor(0);
-        auto k_tensor = input_tensors.get_tensor(0);
-        auto v_tensor = input_tensors.get_tensor(0);
-        auto pos_emb_tensor = input_tensors.get_tensor(1);
+        auto input_tensor = input_tensors.get_tensor(0);
+        auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(input_tensor.buft);
 
-        auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(q_tensor.buft);
+        /*
+        GGMLF_LOG_INFO("input_tensor shape: %lld, %lld, %lld, %lld\n",
+            input_tensor.tensor->ne[0], input_tensor.tensor->ne[1], input_tensor.tensor->ne[2], input_tensor.tensor->ne[3]);
+        // pad input ne1 to 64
+        auto input_len = input_tensor.tensor->ne[1];
+        auto input_ne1_padded_len = GGML_PAD(input_tensor.tensor->ne[1], GGML_KQ_MASK_PAD);
+        auto padded_input_tensor = ggml_pad(
+            bf_ctx.ctx,
+            input_tensor.tensor,
+            0,
+            input_ne1_padded_len - input_tensor.tensor->ne[1],
+            0, 0);
+            */
+
+        auto q_tensor = input_tensor;
+        auto k_tensor = input_tensor;
+        auto v_tensor = input_tensor;
+        auto pos_emb_tensor = input_tensors.get_tensor(1);
 
         auto q_bag = TensorBag();
         q_bag.add_tensor(q_tensor);
@@ -585,8 +702,19 @@ namespace ggml_runtime
                 k_tensor_linear.tensor->ne[1],
                 k_tensor_linear.tensor->ne[2]),
                 0, 2, 1, 3);
+        /*
+        GGMLF_LOG_INFO("k multi head shape: %lld, %lld, %lld, %lld\n",
+            k_multi_head->ne[0], k_multi_head->ne[1], k_multi_head->ne[2], k_multi_head->ne[3]);
+        auto k_cache_tensor = session->model_tensor_container->get_tensor_by_name(name + ".k_fp16");
+        k_cache_tensor.tensor = ggml_cpy(bf_ctx.ctx, k_multi_head, k_cache_tensor.tensor);
+        */
+
         auto v_tensor_linear = v_linear_out.get_tensor(0);
-        auto v_multi_head = ggml_permute(bf_ctx.ctx,
+        GGMLF_LOG_INFO("v_tensor_linear shape: %lld, %lld, %lld, %lld\n",
+            v_tensor_linear.tensor->ne[0], v_tensor_linear.tensor->ne[1], v_tensor_linear.tensor->ne[2], v_tensor_linear.tensor->ne[3]);
+
+        // TODO: why ggml_permute can only permute 2 dimensions?
+        auto v_multi_head = ggml_permute(bf_ctx.ctx, ggml_permute(bf_ctx.ctx,
             ggml_reshape_4d(
                 bf_ctx.ctx,
                 v_tensor_linear.tensor,
@@ -594,7 +722,7 @@ namespace ggml_runtime
                 n_head,
                 v_tensor_linear.tensor->ne[1],
                 v_tensor_linear.tensor->ne[2]),
-                0, 2, 1, 3);
+                2, 1, 0, 3), 0, 2, 1, 3);
 
         auto linear_pos_input_bag = TensorBag();
         auto pos_emb_transpose = ggml_reshape_4d(
@@ -651,9 +779,6 @@ namespace ggml_runtime
         auto qlen = matrix_bd->ne[1];
         auto h = matrix_bd->ne[2];
         auto b = matrix_bd->ne[3];
-        auto matrix_bd_o_b1 = matrix_bd->nb[1];
-        auto matrix_bd_o_b2 = matrix_bd->nb[2];
-        auto matrix_bd_o_b3 = matrix_bd->nb[3];
         GGMLF_LOG_INFO("matrix_bd shape: %lld, %lld, %lld, %lld\n",
             matrix_bd->ne[0], matrix_bd->ne[1], matrix_bd->ne[2], matrix_bd->ne[3]);
 
@@ -696,12 +821,103 @@ namespace ggml_runtime
             pos_len * qlen * h * sizeof(float),
             0);
 
+        auto scale_factor = 1.0f / sqrtf(d_k);
+        auto feat_len = k_tensor.tensor->ne[1];
+        // clip matrix to square shape
+        auto matrix_bd_square = ggml_cont(bf_ctx.ctx, ggml_view_4d(
+            bf_ctx.ctx,
+            matrix_bd_final,
+            feat_len,
+            matrix_bd_final->ne[1],
+            matrix_bd_final->ne[2],
+            matrix_bd_final->ne[3],
+            matrix_bd_final->nb[1],
+            matrix_bd_final->nb[2],
+            matrix_bd_final->nb[3],
+            0));
+
+        /*
+        auto mask_n1_paded_len = GGML_PAD(q_with_bias_u_tensor->ne[1], GGML_KQ_MASK_PAD);
+        GGMLF_LOG_INFO("q ne1: %lld, pad to: %lld\n",
+            q_with_bias_u_tensor->ne[1],
+            mask_n1_paded_len);
+
+        auto mask = ggml_pad(
+            bf_ctx.ctx,
+            matrix_bd_square,
+            0, mask_n1_paded_len - matrix_bd_square->ne[1], 0, 0);
+
+        GGMLF_LOG_INFO("mask shape: %lld, %lld, %lld, %lld\n",
+            mask->ne[0], mask->ne[1], mask->ne[2], mask->ne[3]);
+
+        GGMLF_LOG_INFO("k_multi_head ne[1]: %lld\n", k_multi_head->ne[1]);
+        GGMLF_LOG_INFO("v_multi_head ne[1]: %lld\n", v_multi_head->ne[1]);
+        // do flash attention
+        auto attn_out = ggml_flash_attn_ext(
+            bf_ctx.ctx,
+            q_with_bias_u_tensor,
+            k_cache_tensor.tensor,
+            v_multi_head,
+            NULL,
+            scale_factor, 0, 0);
+
+        GGMLF_LOG_INFO("attn_out shape: %lld, %lld, %lld, %lld\n",
+            attn_out->ne[0], attn_out->ne[1], attn_out->ne[2], attn_out->ne[3]);
+        attn_out = ggml_reshape_3d(
+            bf_ctx.ctx,
+            attn_out,
+            n_head * d_k,
+            attn_out->ne[2],
+            attn_out->ne[3]);
+
+        attn_out = ggml_view_3d(
+            bf_ctx.ctx,
+            attn_out,
+            attn_out->ne[0],
+            input_len,
+            attn_out->ne[2],
+            attn_out->nb[1],
+            attn_out->nb[2],
+            0);
+            */
+
+        // do manual attention
+        auto matrix_ac = ggml_mul_mat(
+            bf_ctx.ctx,
+            k_multi_head,
+            q_with_bias_u_tensor);
+
+        auto scores = ggml_scale(
+            bf_ctx.ctx,
+            ggml_add(
+                bf_ctx.ctx,
+                matrix_ac,
+                matrix_bd_square),
+            scale_factor);
+
+        auto attn = ggml_soft_max(bf_ctx.ctx, scores);
+        GGMLF_LOG_INFO("v_multi_head shape: %lld, %lld, %lld, %lld\n",
+            v_multi_head->ne[0], v_multi_head->ne[1], v_multi_head->ne[2], v_multi_head->ne[3]);
+        GGMLF_LOG_INFO("attn shape: %lld, %lld, %lld, %lld\n",
+            attn->ne[0], attn->ne[1], attn->ne[2], attn->ne[3]);
+        //attn = ggml_transpose(bf_ctx.ctx, ggml_mul_mat(bf_ctx.ctx, attn, ggml_transpose(bf_ctx.ctx, v_multi_head)));
+        attn = ggml_permute(bf_ctx.ctx, ggml_mul_mat(bf_ctx.ctx,
+            ggml_cont(bf_ctx.ctx, v_multi_head),
+            attn),
+            0, 2, 1, 3);
+        attn = ggml_reshape_3d(
+            bf_ctx.ctx,
+            ggml_cont(bf_ctx.ctx, attn),
+            n_head * d_k,
+            attn->ne[2],
+            attn->ne[3]);
+
         auto out_bag = TensorBag();
-        out_bag.add_tensor(ggml_bf_tensor(matrix_bd, bf_ctx.buft));
-        out_bag.add_tensor(ggml_bf_tensor(matrix_bd_roll, bf_ctx.buft));
-        out_bag.add_tensor(ggml_bf_tensor(matrix_bd_transview, bf_ctx.buft));
-        out_bag.add_tensor(ggml_bf_tensor(matrix_bd_slice, bf_ctx.buft));
-        out_bag.add_tensor(ggml_bf_tensor(matrix_bd_final, bf_ctx.buft));
+        out_bag.add_tensor(ggml_bf_tensor(attn, bf_ctx.buft));
+
+        out_bag = linear_out->build_graph(session, out_bag, session_tensor_container);
+        out_bag.add_tensor(ggml_bf_tensor(attn, bf_ctx.buft));
+
         return out_bag;
     }
 

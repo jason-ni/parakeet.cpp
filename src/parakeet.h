@@ -139,6 +139,60 @@ private:
     ggml_runtime::Linear* linear2;
 };
 
+class ConformerConvolution: public ggml_runtime::Module
+{
+public:
+    ConformerConvolution(
+        const std::string& name,
+        int d_model,
+        int kernel_size,
+        bool use_bias=true):
+    name(name), d_model(d_model), kernel_size(kernel_size), use_bias(use_bias)
+    {
+        pointwise_conv1 = new ggml_runtime::Conv1D(
+            name + ".pointwise_conv1",
+            d_model,
+            d_model*2,
+            1,
+            1,
+            0,
+            1,
+            false);
+        depthwise_conv = new ggml_runtime::Conv1D(
+            name + ".depthwise_conv",
+            d_model,
+            d_model,
+            9,
+            1,
+            4,
+            1,
+            false,
+            true);
+
+    };
+    ~ConformerConvolution()
+    {
+        delete pointwise_conv1;
+        delete depthwise_conv;
+    };
+
+    int tensor_count() override;
+    void define_tensors(ggml_runtime::Session* session) override;
+    ggml_runtime::TensorBag build_graph(
+        ggml_runtime::Session* session,
+        ggml_runtime::TensorBag input_tensors,
+        ggml_runtime::TensorContainer* session_tensor_container) override;
+    void set_data(ggml_runtime::Session* session) override;
+
+private:
+    std::string name;
+    int d_model;
+    int kernel_size;
+    bool use_bias = true;
+    ggml_runtime::Conv1D* pointwise_conv1;
+    ggml_runtime::Conv1D* depthwise_conv;
+};
+
 
 class ConFormerLayer: public ggml_runtime::Module
 {
@@ -164,7 +218,14 @@ public:
             8,
             d_model,
             false);
-
+        norm_conv = new ggml_runtime::LayerNorm(
+            name + ".norm_conv",
+            input_shape);
+        conv = new ConformerConvolution(
+            name + ".conv",
+            d_model,
+            9,
+            false);
     };
     ~ConFormerLayer()
     {
@@ -172,6 +233,8 @@ public:
         delete feed_forward1;
         delete norm_self_attn;
         delete self_attn;
+        delete norm_conv;
+        delete conv;
     };
 
     int tensor_count() override;
@@ -190,6 +253,8 @@ private:
     ConformerFeedForward* feed_forward1;
     ggml_runtime::LayerNorm* norm_self_attn;
     ggml_runtime::RelPositionMultiHeadAttention* self_attn;
+    ggml_runtime::LayerNorm* norm_conv;
+    ConformerConvolution* conv;
 };
 
 class ConFormer: public ggml_runtime::Module

@@ -216,7 +216,18 @@ void ggml_tensor_to_str_summarized(char* buf, size_t size, const struct ggml_ten
         t_view.nb[i] = tensor->nb[i];
     }
     print_tensor(buf, size, &buf_offset, t_view, 0);
-    append_str(buf , size, &buf_offset, "shape: [%lld, %lld, %lld, %lld]\n", tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3]);
+    append_str(buf , size, &buf_offset, "shape: [%lld, %lld, %lld, %lld], type: ",
+        tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3]);
+    if (tensor->type == GGML_TYPE_F32)
+    {
+        append_str(buf, size, &buf_offset, "f32\n");
+    } else if (tensor->type == GGML_TYPE_F16)
+    {
+        append_str(buf, size, &buf_offset, "f16\n");
+    } else
+    {
+        append_str(buf, size, &buf_offset, "unknown\n");
+    }
 }
 
 void tensor_data_logging(const char* file, int line, const char* func, const struct ggml_tensor* tensor, const void* tensor_data)

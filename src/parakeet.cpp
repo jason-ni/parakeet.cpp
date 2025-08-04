@@ -47,7 +47,7 @@ void SubSampling::set_data(ggml_runtime::Session* session)
 
 int ConFormer::tensor_count()
 {
-    return pre_encode->tensor_count() + 4 + pos_enc->tensor_count();
+    return pre_encode->tensor_count() + 4 + pos_enc->tensor_count() + layers_0->tensor_count();
 }
 
 void ConFormer::define_tensors(ggml_runtime::Session* session)
@@ -101,12 +101,59 @@ void ConformerFeedForward::set_data(ggml_runtime::Session* session)
     linear2->set_data(session);
 }
 
+int ConformerConvolution::tensor_count()
+{
+    return pointwise_conv1->tensor_count() + depthwise_conv->tensor_count() + 4;
+}
+
+void ConformerConvolution::define_tensors(ggml_runtime::Session* session)
+{
+    pointwise_conv1->define_tensors(session);
+    depthwise_conv->define_tensors(session);
+}
+
+ggml_runtime::TensorBag ConformerConvolution::build_graph(ggml_runtime::Session* session, ggml_runtime::TensorBag input_tensors, ggml_runtime::TensorContainer* session_tensor_container)
+{
+    auto input_tensor = input_tensors.get_tensor(0);
+    auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(input_tensor.buft);
+    auto x_transpose = ggml_cont(bf_ctx.ctx,
+        ggml_permute(bf_ctx.ctx, input_tensor.tensor, 1, 0, 2, 3));
+    input_tensors.set_first_tensor(ggml_runtime::ggml_bf_tensor(x_transpose, input_tensor.buft));
+    auto output_tensors = pointwise_conv1->build_graph(session, input_tensors, session_tensor_container);
+    auto x = output_tensors.get_tensor(0);
+
+    // manually inmplement glu
+    auto part_a = ggml_view_4d(
+        bf_ctx.ctx,
+        x.tensor,
+        x.tensor->ne[0], x.tensor->ne[1] / 2, x.tensor->ne[2], x.tensor->ne[3],
+        x.tensor->nb[1], x.tensor->nb[2], x.tensor->nb[3], 0);
+    auto part_b = ggml_view_4d(
+        bf_ctx.ctx,
+        x.tensor,
+        x.tensor->ne[0], x.tensor->ne[1] / 2, x.tensor->ne[2], x.tensor->ne[3],
+        x.tensor->nb[1], x.tensor->nb[2], x.tensor->nb[3], x.tensor->nb[1] * (x.tensor->ne[1] / 2));
+    auto part_b_sigmoid = ggml_sigmoid(bf_ctx.ctx, part_b);
+    auto x_glu = ggml_mul(bf_ctx.ctx, part_a, part_b_sigmoid);
+    output_tensors.set_first_tensor(ggml_runtime::ggml_bf_tensor(x_glu, input_tensor.buft));
+    output_tensors = depthwise_conv->build_graph(session, output_tensors, session_tensor_container);
+    return output_tensors;
+}
+
+void ConformerConvolution::set_data(ggml_runtime::Session* session)
+{
+    pointwise_conv1->set_data(session);
+    depthwise_conv->set_data(session);
+}
+
 int ConFormerLayer::tensor_count()
 {
     return norm_feed_forward1->tensor_count() +
         feed_forward1->tensor_count() +
         norm_self_attn->tensor_count() +
-        self_attn->tensor_count() + 4;
+        self_attn->tensor_count() +
+        norm_conv->tensor_count() +
+        conv->tensor_count() + 4;
 }
 
 void ConFormerLayer::define_tensors(ggml_runtime::Session* session)
@@ -115,6 +162,8 @@ void ConFormerLayer::define_tensors(ggml_runtime::Session* session)
     feed_forward1->define_tensors(session);
     norm_self_attn->define_tensors(session);
     self_attn->define_tensors(session);
+    norm_conv->define_tensors(session);
+    conv->define_tensors(session);
 }
 
 ggml_runtime::TensorBag ConFormerLayer::build_graph(ggml_runtime::Session* session, ggml_runtime::TensorBag input_tensors, ggml_runtime::TensorContainer* session_tensor_container)
@@ -137,6 +186,11 @@ ggml_runtime::TensorBag ConFormerLayer::build_graph(ggml_runtime::Session* sessi
     output_tensors = norm_self_attn->build_graph(session, output_tensors, session_tensor_container);
     output_tensors.add_tensor(pos_emb_tensor);
     output_tensors = self_attn->build_graph(session, output_tensors, session_tensor_container);
+    auto residual = ggml_add(bf_ctx.ctx, attn_input_tensor, output_tensors.get_tensor(0).tensor);
+    output_tensors.set_first_tensor(ggml_runtime::ggml_bf_tensor(residual, input_tensor.buft));
+    output_tensors = norm_conv->build_graph(session, output_tensors, session_tensor_container);
+    output_tensors.add_tensor(ggml_runtime::ggml_bf_tensor(residual, input_tensor.buft));
+    output_tensors = conv->build_graph(session, output_tensors, session_tensor_container);
     return output_tensors;
 }
 
@@ -146,6 +200,8 @@ void ConFormerLayer::set_data(ggml_runtime::Session* session)
     feed_forward1->set_data(session);
     norm_self_attn->set_data(session);
     self_attn->set_data(session);
+    norm_conv->set_data(session);
+    conv->set_data(session);
 }
 
 

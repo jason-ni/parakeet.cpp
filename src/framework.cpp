@@ -614,8 +614,9 @@ namespace ggml_runtime
                 std::function<void(Session*, TensorContainer*)> set_input_data,
                 std::function<void(Session*, TensorBag, TensorContainer*)> return_output)
     {
+        auto tensor_max_approx_size = root_module->tensor_count();
         std::unique_ptr<TensorContainer>  session_tensor_container = std::make_unique<TensorContainer>(
-            buft_list, root_module->tensor_count());
+            buft_list, tensor_max_approx_size);
         auto input_tensors = define_input_tensors(this, session_tensor_container.get());
         output_tensors = root_module->build_graph(this, input_tensors, session_tensor_container.get());
         session_tensor_container->allocate_tensors_on_backend_buffers();

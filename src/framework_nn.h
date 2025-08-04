@@ -9,6 +9,51 @@
 
 namespace ggml_runtime
 {
+    class Conv1D : public Module {
+    public:
+        Conv1D(
+            const std::string& name,
+            int in_channels,
+            int out_channels,
+            int kernel_size,
+            int stride = 1,
+            int padding = 0,
+            int dilation = 1,
+            bool use_bias = true,
+            bool is_dw = false):
+        name(name), in_channels(in_channels), out_channels(out_channels),
+        kernel_size(kernel_size), stride(stride), padding(padding), dilation(dilation), use_bias(use_bias), is_dw(is_dw)
+        {
+            weight_name = this->name + ".weight";
+            bias_name = this->name + ".bias";
+        }
+        ~Conv1D() = default;
+
+        int tensor_count() override;
+
+        void define_tensors(Session* session) override;
+
+        TensorBag build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container) override;
+
+        void set_data(Session* session) override;
+
+    private:
+        std::string name;
+        std::string weight_name;
+        std::string bias_name;
+        int in_channels;
+        int out_channels;
+        int kernel_size;
+        int stride;
+        int padding;
+        int dilation;
+        bool use_bias;
+        bool is_dw;
+
+        ggml_bf_tensor weight = ggml_bf_tensor(nullptr, nullptr);
+        ggml_bf_tensor bias = ggml_bf_tensor(nullptr, nullptr);
+    };
+
     class Conv2D : public Module {
     public:
         Conv2D(
