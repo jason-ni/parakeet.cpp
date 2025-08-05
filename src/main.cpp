@@ -207,7 +207,7 @@ int main()
         }
     };
 
-    for (int i = 0; i < 1; i++)
+    for (int i = 0; i < 2; i++)
     {
         auto before_time = std::chrono::high_resolution_clock::now();
         session.run(

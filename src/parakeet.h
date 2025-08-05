@@ -158,6 +158,15 @@ public:
             0,
             1,
             false);
+        pointwise_conv2 = new ggml_runtime::Conv1D(
+            name + ".pointwise_conv2",
+            d_model,
+            d_model,
+            1,
+            1,
+            0,
+            1,
+            false);
         depthwise_conv = new ggml_runtime::Conv1D(
             name + ".depthwise_conv",
             d_model,
@@ -168,12 +177,17 @@ public:
             1,
             false,
             true);
+        batch_norm = new ggml_runtime::BatchNorm1d(
+            name + ".batch_norm",
+            d_model);
 
     };
     ~ConformerConvolution()
     {
         delete pointwise_conv1;
+        delete pointwise_conv2;
         delete depthwise_conv;
+        delete batch_norm;
     };
 
     int tensor_count() override;
@@ -190,7 +204,9 @@ private:
     int kernel_size;
     bool use_bias = true;
     ggml_runtime::Conv1D* pointwise_conv1;
+    ggml_runtime::Conv1D* pointwise_conv2;
     ggml_runtime::Conv1D* depthwise_conv;
+    ggml_runtime::BatchNorm1d* batch_norm;
 };
 
 
@@ -226,6 +242,18 @@ public:
             d_model,
             9,
             false);
+        norm_feed_forward2 = new ggml_runtime::LayerNorm(
+            name + ".norm_feed_forward2",
+            input_shape);
+        feed_forward2 = new ConformerFeedForward(
+            name + ".feed_forward2",
+            d_model,
+            4096,
+            0.1,
+            use_bias);
+        norm_out = new ggml_runtime::LayerNorm(
+            name + ".norm_out",
+            input_shape);
     };
     ~ConFormerLayer()
     {
@@ -235,6 +263,9 @@ public:
         delete self_attn;
         delete norm_conv;
         delete conv;
+        delete norm_feed_forward2;
+        delete feed_forward2;
+        delete norm_out;
     };
 
     int tensor_count() override;
@@ -255,6 +286,9 @@ private:
     ggml_runtime::RelPositionMultiHeadAttention* self_attn;
     ggml_runtime::LayerNorm* norm_conv;
     ConformerConvolution* conv;
+    ggml_runtime::LayerNorm* norm_feed_forward2;
+    ConformerFeedForward* feed_forward2;
+    ggml_runtime::LayerNorm* norm_out;
 };
 
 class ConFormer: public ggml_runtime::Module
@@ -266,13 +300,18 @@ public:
         bool use_bias = false;
         pre_encode = new SubSampling(this->name + ".pre_encode");
         pos_enc = new ggml_runtime::RelPositionalEncoding(this->name + ".pos_enc", 1024, 5000);
-        layers_0 = new ConFormerLayer(this->name + ".layers.0", d_model, use_bias);
+        layers = new ggml_runtime::SequenceModule(this->name + ".layers");
+        for (int i = 0; i < 24; i++)
+        {
+            auto layer = new ConFormerLayer(this->name + ".layers." + std::to_string(i), d_model, use_bias);
+            layers->modules.push_back(layer);
+        }
     };
     ~ConFormer()
     {
         delete pre_encode;
         delete pos_enc;
-        delete layers_0;
+        delete layers;
     };
 
     int tensor_count() override;
@@ -288,5 +327,5 @@ private:
     int d_model;
     SubSampling* pre_encode;
     ggml_runtime::RelPositionalEncoding* pos_enc;
-    ConFormerLayer* layers_0;
+    ggml_runtime::SequenceModule* layers;
 };

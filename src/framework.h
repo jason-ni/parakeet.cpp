@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <iostream>
+#include <chrono>
 #include "ggml.h"
 #include "ggml-cpp.h"
 #include "ggml-alloc.h"

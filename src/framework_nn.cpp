@@ -619,6 +619,79 @@ namespace ggml_runtime
         //GGMLF_LOG_DATA(bias_tensor.tensor, tensor_data);
     }
 
+    int BatchNorm1d::tensor_count()
+    {
+        return 8;
+    }
+
+    void BatchNorm1d::define_tensors(Session* session)
+    {
+        if (!affine)
+        {
+            throw std::runtime_error("BatchNorm1d without affine is not supported");
+        }
+        session->model_tensor_container->create_tensor_2d(
+            weight_name,
+            GGMLF_TENSOR_OUTPUT,
+            GGML_TYPE_F32,
+            1, num_features);
+        session->model_tensor_container->create_tensor_2d(
+            bias_name,
+            GGMLF_TENSOR_OUTPUT,
+            GGML_TYPE_F32,
+            1, num_features);
+        session->model_tensor_container->create_tensor_2d(
+            running_mean_name,
+            GGMLF_TENSOR_OUTPUT,
+            GGML_TYPE_F32,
+            1, num_features);
+        session->model_tensor_container->create_tensor_2d(
+            running_var_name,
+            GGMLF_TENSOR_OUTPUT,
+            GGML_TYPE_F32,
+            1, num_features);
+        session->model_tensor_container->create_tensor_1d(
+            "eps",
+            GGMLF_TENSOR_BIAS, GGML_TYPE_F32, 1);
+    }
+
+    TensorBag BatchNorm1d::build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container)
+    {
+        auto input_tensor = input_tensors.get_tensor(0);
+        auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(input_tensor.buft);
+
+        auto running_mean = session->model_tensor_container->get_tensor_by_name(running_mean_name);
+        auto running_var = session->model_tensor_container->get_tensor_by_name(running_var_name);
+        auto weight = session->model_tensor_container->get_tensor_by_name(weight_name);
+        auto bias = session->model_tensor_container->get_tensor_by_name(bias_name);
+        auto eps = session->model_tensor_container->get_tensor_by_name("eps");
+
+        auto p1 = ggml_sub(bf_ctx.ctx, input_tensor.tensor, running_mean.tensor);
+        auto p2 = ggml_sqrt(bf_ctx.ctx, ggml_add(bf_ctx.ctx, running_var.tensor, eps.tensor));
+        auto p3 = ggml_mul(bf_ctx.ctx, ggml_div(bf_ctx.ctx, p1, p2), weight.tensor);
+        auto x = ggml_add(bf_ctx.ctx, p3, bias.tensor);
+        auto output_tensors = TensorBag();
+        output_tensors.add_tensor(ggml_bf_tensor(x, bf_ctx.buft));
+        return output_tensors;
+    }
+
+    void load_model_tensor(Session* session, std::string& tensor_name)
+    {
+        ggml_bf_tensor weight_tensor = session->model_tensor_container->get_tensor_by_name(tensor_name);
+        auto data = session->gguf_loader->get_tensor_file_data(tensor_name, ggml_nbytes(weight_tensor.tensor));
+        ggml_backend_tensor_set(weight_tensor.tensor, data, 0, ggml_nbytes(weight_tensor.tensor));
+    }
+
+
+    void BatchNorm1d::set_data(Session* session)
+    {
+        auto tensor_names = {weight_name, bias_name, running_mean_name, running_var_name};
+        for (auto tensor_name : tensor_names)
+        {
+            load_model_tensor(session, tensor_name);
+        }
+    }
+
     int RelPositionMultiHeadAttention::tensor_count()
     {
         return 16;

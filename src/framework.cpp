@@ -552,7 +552,7 @@ namespace ggml_runtime
         };
 
         struct ggml_context * ctx = ggml_init(params);
-        gf = ggml_new_graph(ctx);
+        gf = ggml_new_graph_custom(ctx, 4096, false);
 
         for (size_t i = 0; i < input_tensors.tensor_count(); ++i)
         {
@@ -622,7 +622,11 @@ namespace ggml_runtime
         session_tensor_container->allocate_tensors_on_backend_buffers();
         session_tensor_container->free_temp_ctx();
         set_input_data(this, session_tensor_container.get());
+        auto start_time = std::chrono::high_resolution_clock::now();
         run_schedule(input_tensors);
+        auto after_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(after_time - start_time).count();
+        GGMLF_LOG_INFO("run_schedule took %lld microseconds\n", duration);
         return_output(this, output_tensors, session_tensor_container.get());
     }
 

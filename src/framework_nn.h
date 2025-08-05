@@ -275,6 +275,42 @@ namespace ggml_runtime
         int64_t input_shape[GGML_MAX_DIMS] = {0};
     };
 
+    class BatchNorm1d : public Module
+    {
+    public:
+        BatchNorm1d(
+            const std::string& name,
+            int num_features,
+            bool affine = true):
+        name(name), num_features(num_features), affine(affine)
+        {
+            weight_name = this->name + ".weight";
+            bias_name = this->name + ".bias";
+            running_mean_name = this->name + ".running_mean";
+            running_var_name = this->name + ".running_var";
+            eps_name = this->name + ".eps";
+        };
+        ~BatchNorm1d() = default;
+
+        int tensor_count() override;
+
+        void define_tensors(Session* session) override;
+
+        TensorBag build_graph(Session* session, TensorBag input_tensors, TensorContainer* session_tensor_container) override;
+
+        void set_data(Session* session) override;
+
+    private:
+        std::string name;
+        std::string weight_name;
+        std::string bias_name;
+        std::string running_mean_name;
+        std::string running_var_name;
+        std::string eps_name;
+        int num_features;
+        bool affine;
+    };
+
     class RelPositionMultiHeadAttention : public Module
     {
     public:
