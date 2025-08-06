@@ -70,7 +70,7 @@ namespace ggml_runtime
         if (use_bias)
         {
             auto bias_tensor = session->model_tensor_container->get_tensor_by_name(bias_name);
-            out_tensor = ggml_add(bf_ctx.ctx, out_tensor, bias_tensor.tensor);
+            out_tensor = ggml_add_inplace(bf_ctx.ctx, out_tensor, bias_tensor.tensor);
         }
         TensorBag output_tensors;
         output_tensors.add_tensor(ggml_bf_tensor(out_tensor, bf_ctx.buft));
@@ -117,7 +117,7 @@ namespace ggml_runtime
         this->weight = session->model_tensor_container->create_tensor_4d(
             weight_name,
             GGMLF_TENSOR_BIAS,
-            GGML_TYPE_F32,
+            GGML_TYPE_F16,
             kernel_size, kernel_size, in_channels, out_channels);
 
         this->bias = session->model_tensor_container->create_tensor_4d(
@@ -144,7 +144,7 @@ namespace ggml_runtime
             dilation,
             dilation);
 
-        ggml_tensor* output_tensor = ggml_add(bf_ctx.ctx, conv2d_ret, bias_tensor.tensor);
+        ggml_tensor* output_tensor = ggml_add_inplace(bf_ctx.ctx, conv2d_ret, bias_tensor.tensor);
         auto output_tensor_bag = TensorBag();
         output_tensor_bag.add_tensor(ggml_bf_tensor(output_tensor, bf_ctx.buft));
         return output_tensor_bag;
@@ -162,8 +162,10 @@ namespace ggml_runtime
         }
 
         auto weight_data_size = ggml_nbytes(weight_tensor.tensor);
-        auto tensor_data = session->gguf_loader->get_tensor_file_data(weight_name, weight_data_size);
-        ggml_backend_tensor_set(weight_tensor.tensor, tensor_data, 0, weight_data_size);
+        auto tensor_data = session->gguf_loader->get_tensor_file_data(weight_name, weight_data_size*2);
+        std::vector<char> tensor_fp16_data = std::vector<char>(weight_data_size);
+        ggml_fp32_to_fp16_row((float*)tensor_data, (ggml_fp16_t*)tensor_fp16_data.data(), weight_data_size / 2);
+        ggml_backend_tensor_set(weight_tensor.tensor, tensor_fp16_data.data(), 0, weight_data_size);
         //GGMLF_LOG_DATA(weight_tensor.tensor, tensor_data);
 
         auto bias_data_size = ggml_nbytes(bias_tensor.tensor);
@@ -229,7 +231,7 @@ namespace ggml_runtime
             dilation,
             dilation);
 
-        ggml_tensor* output_tensor = ggml_add(bf_ctx.ctx, conv2d_ret, bias_tensor.tensor);
+        ggml_tensor* output_tensor = ggml_add_inplace(bf_ctx.ctx, conv2d_ret, bias_tensor.tensor);
         auto output_tensor_bag = TensorBag();
         output_tensor_bag.add_tensor(ggml_bf_tensor(output_tensor, bf_ctx.buft));
         return output_tensor_bag;
@@ -343,7 +345,7 @@ namespace ggml_runtime
         if (use_bias)
         {
             ggml_bf_tensor bias_tensor = session->model_tensor_container->get_tensor_by_name(bias_name);
-            output_tensor = ggml_add(bf_ctx.ctx, matmul_ret, bias_tensor.tensor);
+            output_tensor = ggml_add_inplace(bf_ctx.ctx, matmul_ret, bias_tensor.tensor);
         } else
         {
             output_tensor = matmul_ret;
@@ -584,11 +586,11 @@ namespace ggml_runtime
             bf_ctx.ctx,
             input_tensor.tensor,
             1e-5);
-        auto scaled_tensor = ggml_mul(
+        auto scaled_tensor = ggml_mul_inplace(
             bf_ctx.ctx,
             norm_tensor,
             weight_tensor.tensor);
-        auto output_tensor = ggml_add(
+        auto output_tensor = ggml_add_inplace(
             bf_ctx.ctx,
             scaled_tensor,
             bias_tensor.tensor);
@@ -667,9 +669,9 @@ namespace ggml_runtime
         auto eps = session->model_tensor_container->get_tensor_by_name("eps");
 
         auto p1 = ggml_sub(bf_ctx.ctx, input_tensor.tensor, running_mean.tensor);
-        auto p2 = ggml_sqrt(bf_ctx.ctx, ggml_add(bf_ctx.ctx, running_var.tensor, eps.tensor));
-        auto p3 = ggml_mul(bf_ctx.ctx, ggml_div(bf_ctx.ctx, p1, p2), weight.tensor);
-        auto x = ggml_add(bf_ctx.ctx, p3, bias.tensor);
+        auto p2 = ggml_sqrt_inplace(bf_ctx.ctx, ggml_add(bf_ctx.ctx, running_var.tensor, eps.tensor));
+        auto p3 = ggml_mul_inplace(bf_ctx.ctx, ggml_div(bf_ctx.ctx, p1, p2), weight.tensor);
+        auto x = ggml_add_inplace(bf_ctx.ctx, p3, bias.tensor);
         auto output_tensors = TensorBag();
         output_tensors.add_tensor(ggml_bf_tensor(x, bf_ctx.buft));
         return output_tensors;
@@ -865,7 +867,7 @@ namespace ggml_runtime
             matrix_bd_roll->ne[0],
             matrix_bd_roll->ne[2],
             matrix_bd_roll->ne[3],
-            matrix_bd_roll->ne[1] * sizeof(float),
+            matrix_bd_roll->nb[1],
             matrix_bd_roll->nb[2],
             matrix_bd_roll->nb[3],
             0);
@@ -880,7 +882,7 @@ namespace ggml_runtime
             matrix_bd_transview->nb[1],
             matrix_bd_transview->nb[2],
             matrix_bd_transview->nb[3],
-            matrix_bd_transview->nb[1]));
+            matrix_bd_transview->nb[0]));
 
         auto matrix_bd_final = ggml_view_4d(
             bf_ctx.ctx,
@@ -960,7 +962,7 @@ namespace ggml_runtime
             k_multi_head,
             q_with_bias_u_tensor);
 
-        auto scores = ggml_scale(
+        auto scores = ggml_scale_inplace(
             bf_ctx.ctx,
             ggml_add(
                 bf_ctx.ctx,
@@ -968,7 +970,7 @@ namespace ggml_runtime
                 matrix_bd_square),
             scale_factor);
 
-        auto attn = ggml_soft_max(bf_ctx.ctx, scores);
+        auto attn = ggml_soft_max_inplace(bf_ctx.ctx, scores);
         GGMLF_LOG_INFO("v_multi_head shape: %lld, %lld, %lld, %lld\n",
             v_multi_head->ne[0], v_multi_head->ne[1], v_multi_head->ne[2], v_multi_head->ne[3]);
         GGMLF_LOG_INFO("attn shape: %lld, %lld, %lld, %lld\n",

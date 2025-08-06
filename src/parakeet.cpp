@@ -64,7 +64,7 @@ ggml_runtime::TensorBag ConFormer::build_graph(ggml_runtime::Session* session, g
     auto output_tensors = layers->build_graph(session, pos_enc_output, session_tensor_container);
     auto x = output_tensors.get_tensor(0);
     auto bf_ctx = session_tensor_container->get_ctx_of_buffer_type(x.buft);
-    x.tensor = ggml_cont(bf_ctx.ctx, ggml_permute(bf_ctx.ctx, x.tensor, 1, 0, 2, 3));
+    //x.tensor = ggml_cont(bf_ctx.ctx, ggml_permute(bf_ctx.ctx, x.tensor, 1, 0, 2, 3));
     output_tensors.set_first_tensor(x);
     return output_tensors;
 }

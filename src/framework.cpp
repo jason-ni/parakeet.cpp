@@ -583,7 +583,7 @@ namespace ggml_runtime
             throw std::runtime_error("failed to allocate graph");
         }
 
-        if (!ggml_graph_compute_helper(sched, gf, 4))
+        if (!ggml_graph_compute_helper(sched, gf, 2))
         {
             GGMLF_LOG_ERROR("Failed to compute graph\n");
             throw std::runtime_error("failed to compute graph");

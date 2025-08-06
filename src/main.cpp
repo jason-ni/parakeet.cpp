@@ -204,10 +204,19 @@ int main()
             ggml_backend_tensor_get(output.tensor, buffer.data(), 0, output_bytes);
             GGMLF_LOG_DATA(output.tensor, buffer.data());
             GGMLF_LOG_INFO("output tensor buft: %s\n", output.buft->iface.get_name(output.buft));
+            // write to file
+            auto file = ggml_fopen(("output_" + std::to_string(i) + ".bin").c_str(), "wb");
+            if (file == nullptr)
+            {
+                printf("Failed to open file: output_%d.bin\n", i);
+                return;
+            }
+            fwrite(buffer.data(), 1, output_bytes, file);
+            fclose(file);
         }
     };
 
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 1; i++)
     {
         auto before_time = std::chrono::high_resolution_clock::now();
         session.run(
