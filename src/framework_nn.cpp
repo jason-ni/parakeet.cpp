@@ -413,6 +413,13 @@ namespace ggml_runtime
             GGMLF_TENSOR_OUTPUT,
             GGML_TYPE_F32,
             2);
+        /*
+        session->model_tensor_container->create_tensor_2d(
+            name + ".pe",
+            GGMLF_TENSOR_OUTPUT,
+            GGML_TYPE_F32,
+            d_model, max_len*2-1);
+        */
     }
 
     ggml_bf_tensor RelPositionalEncoding::get_pe_tensor(Session* session, TensorContainer* session_tensor_container)
@@ -501,6 +508,7 @@ namespace ggml_runtime
         int feature_len = input_tensor.tensor->ne[1];
 
         auto pe_tensor = get_pe_tensor(session, session_tensor_container);
+        //auto pe_tensor = session->model_tensor_container->get_tensor_by_name(name + ".pe");
         auto bf_ctx = session->model_tensor_container->get_ctx_of_buffer_type(pe_tensor.buft);
         auto center_pos = max_len;
         auto start_pos = center_pos - feature_len;
@@ -554,6 +562,25 @@ namespace ggml_runtime
         data[0] = 1.0f;
         data[1] = 0.0f;
         ggml_backend_tensor_set(interleave_2_tensor.tensor, buffer.data(), 0, 2 * sizeof(float));
+        /*
+        auto pe_tensor = session->model_tensor_container->get_tensor_by_name(name + ".pe");
+        auto data_size = ggml_nbytes(pe_tensor.tensor);
+        std::vector<char> buffer(data_size);
+        float* data = (float*)buffer.data();
+        // read from a file 'pe.bin'
+        auto file = ggml_fopen("../../pe.bin", "rb");
+        if (file == nullptr)
+        {
+            GGMLF_LOG_ERROR("open pe.bin failed");
+        }
+        auto read_size = fread(buffer.data(), 1, data_size, file);
+        if (read_size != data_size)
+        {
+            GGMLF_LOG_ERROR("read pe.bin failed");
+        }
+        fclose(file);
+        ggml_backend_tensor_set(pe_tensor.tensor, buffer.data(), 0, data_size);
+        */
     }
 
     int LayerNorm::tensor_count()
@@ -859,6 +886,9 @@ namespace ggml_runtime
 
         // implement a left pad
         auto matrix_bd_pad = ggml_pad(bf_ctx.ctx, matrix_bd, 1, 0, 0, 0);
+        //auto matrix_bd_pad = ggml_pad_reflect_1d(bf_ctx.ctx, matrix_bd, 1, 0);
+        GGMLF_LOG_INFO("matrix_bd_pad shape: %lld, %lld, %lld, %lld\n",
+            matrix_bd_pad->ne[0], matrix_bd_pad->ne[1], matrix_bd_pad->ne[2], matrix_bd_pad->ne[3]);
         auto matrix_bd_roll = ggml_roll(bf_ctx.ctx, matrix_bd_pad, 1, 0, 0, 0);
         auto matrix_bd_transview= ggml_view_4d(
             bf_ctx.ctx,

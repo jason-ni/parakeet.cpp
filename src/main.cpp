@@ -214,6 +214,12 @@ int main()
             fwrite(buffer.data(), 1, output_bytes, file);
             fclose(file);
         }
+        auto pe_tensor = session->model_tensor_container->get_tensor_by_name("encoder.pos_enc.pe");
+        auto pe_bytes = ggml_nbytes(pe_tensor.tensor);
+        auto pe_buffer = std::vector<char>(pe_bytes);
+        ggml_backend_tensor_get(pe_tensor.tensor, pe_buffer.data(), 0, pe_bytes);
+        GGMLF_LOG_INFO("pe tensor buft: %s\n", pe_tensor.buft->iface.get_name(pe_tensor.buft));
+        GGMLF_LOG_DATA(pe_tensor.tensor, pe_buffer.data());
     };
 
     for (int i = 0; i < 1; i++)
