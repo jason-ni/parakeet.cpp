@@ -76,6 +76,7 @@ namespace ggml_runtime
     {
         bool use_gpu = false;
         int gpu_device_idx = 0;
+        char* pe_bin_path = nullptr;
     };
 
     class BackendManager
@@ -174,6 +175,8 @@ namespace ggml_runtime
     class Session
     {
         public:
+            Params params;
+
             explicit Session(Params params, Module* module, GGUFLoader* gguf_loader);
             ~Session() = default;
 
@@ -201,7 +204,6 @@ namespace ggml_runtime
             void build_graph(TensorBag input_tensors);
             void run_schedule(TensorBag input_tensors);
 
-            Params params;
             Module* root_module;
             size_t n_tensors;
             buft_list_t buft_list;

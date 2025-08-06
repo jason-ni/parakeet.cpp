@@ -393,6 +393,7 @@ namespace ggml_runtime
 
     void RelPositionalEncoding::define_tensors(Session* session)
     {
+        /*
         session->model_tensor_container->create_tensor_1d(
             name + ".div_term",
             GGMLF_TENSOR_OUTPUT,
@@ -413,13 +414,12 @@ namespace ggml_runtime
             GGMLF_TENSOR_OUTPUT,
             GGML_TYPE_F32,
             2);
-        /*
+        */
         session->model_tensor_container->create_tensor_2d(
             name + ".pe",
             GGMLF_TENSOR_OUTPUT,
             GGML_TYPE_F32,
             d_model, max_len*2-1);
-        */
     }
 
     ggml_bf_tensor RelPositionalEncoding::get_pe_tensor(Session* session, TensorContainer* session_tensor_container)
@@ -507,8 +507,8 @@ namespace ggml_runtime
         auto input_tensor = input_tensors.get_tensor(0);
         int feature_len = input_tensor.tensor->ne[1];
 
-        auto pe_tensor = get_pe_tensor(session, session_tensor_container);
-        //auto pe_tensor = session->model_tensor_container->get_tensor_by_name(name + ".pe");
+        //auto pe_tensor = get_pe_tensor(session, session_tensor_container);
+        auto pe_tensor = session->model_tensor_container->get_tensor_by_name(name + ".pe");
         auto bf_ctx = session->model_tensor_container->get_ctx_of_buffer_type(pe_tensor.buft);
         auto center_pos = max_len;
         auto start_pos = center_pos - feature_len;
@@ -533,6 +533,7 @@ namespace ggml_runtime
 
     void RelPositionalEncoding::set_data(Session* session)
     {
+        /*
         auto pe_data_size = d_model * (2*max_len-1) * sizeof(float);
         std::vector<char> buffer(pe_data_size);
         float* data = (float*)buffer.data();
@@ -562,13 +563,13 @@ namespace ggml_runtime
         data[0] = 1.0f;
         data[1] = 0.0f;
         ggml_backend_tensor_set(interleave_2_tensor.tensor, buffer.data(), 0, 2 * sizeof(float));
-        /*
+        */
         auto pe_tensor = session->model_tensor_container->get_tensor_by_name(name + ".pe");
         auto data_size = ggml_nbytes(pe_tensor.tensor);
         std::vector<char> buffer(data_size);
         float* data = (float*)buffer.data();
         // read from a file 'pe.bin'
-        auto file = ggml_fopen("../../pe.bin", "rb");
+        auto file = ggml_fopen(session->params.pe_bin_path, "rb");
         if (file == nullptr)
         {
             GGMLF_LOG_ERROR("open pe.bin failed");
@@ -580,7 +581,6 @@ namespace ggml_runtime
         }
         fclose(file);
         ggml_backend_tensor_set(pe_tensor.tensor, buffer.data(), 0, data_size);
-        */
     }
 
     int LayerNorm::tensor_count()
@@ -885,21 +885,21 @@ namespace ggml_runtime
             matrix_bd->ne[0], matrix_bd->ne[1], matrix_bd->ne[2], matrix_bd->ne[3]);
 
         // implement a left pad
-        auto matrix_bd_pad = ggml_pad(bf_ctx.ctx, matrix_bd, 1, 0, 0, 0);
-        //auto matrix_bd_pad = ggml_pad_reflect_1d(bf_ctx.ctx, matrix_bd, 1, 0);
+        //auto matrix_bd_pad = ggml_pad(bf_ctx.ctx, matrix_bd, 1, 0, 0, 0);
+        auto matrix_bd_pad = ggml_pad_reflect_1d(bf_ctx.ctx, matrix_bd, 1, 0);
         GGMLF_LOG_INFO("matrix_bd_pad shape: %lld, %lld, %lld, %lld\n",
             matrix_bd_pad->ne[0], matrix_bd_pad->ne[1], matrix_bd_pad->ne[2], matrix_bd_pad->ne[3]);
-        auto matrix_bd_roll = ggml_roll(bf_ctx.ctx, matrix_bd_pad, 1, 0, 0, 0);
+        //auto matrix_bd_roll = ggml_roll(bf_ctx.ctx, matrix_bd_pad, 1, 0, 0, 0);
         auto matrix_bd_transview= ggml_view_4d(
             bf_ctx.ctx,
-            matrix_bd_roll,
-            matrix_bd_roll->ne[1],
-            matrix_bd_roll->ne[0],
-            matrix_bd_roll->ne[2],
-            matrix_bd_roll->ne[3],
-            matrix_bd_roll->nb[1],
-            matrix_bd_roll->nb[2],
-            matrix_bd_roll->nb[3],
+            matrix_bd_pad,
+            matrix_bd_pad->ne[1],
+            matrix_bd_pad->ne[0],
+            matrix_bd_pad->ne[2],
+            matrix_bd_pad->ne[3],
+            matrix_bd_pad->ne[1] * ggml_element_size(matrix_bd_pad),
+            matrix_bd_pad->nb[2],
+            matrix_bd_pad->nb[3],
             0);
 
         auto matrix_bd_slice = ggml_cont(bf_ctx.ctx, ggml_view_4d(
@@ -912,7 +912,7 @@ namespace ggml_runtime
             matrix_bd_transview->nb[1],
             matrix_bd_transview->nb[2],
             matrix_bd_transview->nb[3],
-            matrix_bd_transview->nb[0]));
+            matrix_bd_transview->nb[1]));
 
         auto matrix_bd_final = ggml_view_4d(
             bf_ctx.ctx,
@@ -986,7 +986,7 @@ namespace ggml_runtime
             0);
             */
 
-        // do manual attention
+        // do scaled dot product attention
         auto matrix_ac = ggml_mul_mat(
             bf_ctx.ctx,
             k_multi_head,

@@ -146,21 +146,30 @@ std::vector<float> load_audio_input(const std::string& file_path)
     return input_data;
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+    if (argc < 4)
+    {
+        printf("Usage: %s <gguf_file> <pe.bin path> <input.data>\n", argv[0]);
+        return -1;
+    }
 
-    auto gguf_loader = ggml_runtime::GGUFLoader("/Users/jason/models/parakeet-tdt-0.6b-v2-float32.gguf");
+    auto model_path = std::string(argv[1]);
+
+    auto gguf_loader = ggml_runtime::GGUFLoader(model_path);
+    auto preprocessed_audio_features_path = std::string(argv[3]);
 
     auto params = ggml_runtime::Params();
     params.use_gpu = true;
     params.gpu_device_idx = 0;
+    params.pe_bin_path = argv[2];
 
     auto root_module = ConFormer("encoder");
     //auto root_module = ggml_runtime::RelPositionalEncoding("pos_enc", 1024, 5000);
     auto session = ggml_runtime::Session(params, &root_module, &gguf_loader);
     session.setup();
 
-    auto input_audio_features = load_audio_input("/Users/jason/prj/parakeet/input.data");
+    auto input_audio_features = load_audio_input(preprocessed_audio_features_path);
 
     std::function<ggml_runtime::TensorBag(ggml_runtime::Session*, ggml_runtime::TensorContainer*)> input_fn = [&](
         ggml_runtime::Session* session,
@@ -214,12 +223,6 @@ int main()
             fwrite(buffer.data(), 1, output_bytes, file);
             fclose(file);
         }
-        auto pe_tensor = session->model_tensor_container->get_tensor_by_name("encoder.pos_enc.pe");
-        auto pe_bytes = ggml_nbytes(pe_tensor.tensor);
-        auto pe_buffer = std::vector<char>(pe_bytes);
-        ggml_backend_tensor_get(pe_tensor.tensor, pe_buffer.data(), 0, pe_bytes);
-        GGMLF_LOG_INFO("pe tensor buft: %s\n", pe_tensor.buft->iface.get_name(pe_tensor.buft));
-        GGMLF_LOG_DATA(pe_tensor.tensor, pe_buffer.data());
     };
 
     for (int i = 0; i < 1; i++)
