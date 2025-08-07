@@ -6,7 +6,9 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
+#include <stdexcept>
 #include "ggml.h"
 
 #ifdef __GNUC__

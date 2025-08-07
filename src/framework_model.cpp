@@ -4,6 +4,18 @@
 #include "framework_common.h"
 #include "framework_model.h"
 
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #ifndef NOMINMAX
+    #define NOMINMAX
+    #endif
+    #include <windows.h>
+    #ifndef PATH_MAX
+    #define PATH_MAX MAX_PATH
+    #endif
+    #include <io.h>
+#endif
+
 struct llama_file {
 
 #if defined(_WIN32)

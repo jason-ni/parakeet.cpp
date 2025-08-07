@@ -15,4 +15,12 @@ target_include_directories(parakeet_cpp PUBLIC
         ../ggml/include
         ../ggml/src
 )
-target_link_libraries(parakeet_cpp PUBLIC ggml ggml-base ggml-cpu ggml-blas ggml-metal)
+# if build on macOS
+if(APPLE)
+    target_link_libraries(parakeet_cpp PUBLIC ggml ggml-base ggml-cpu ggml-blas ggml-metal)
+endif()
+# if build on windows
+if(WIN32)
+    target_link_libraries(parakeet_cpp PUBLIC ggml ggml-base ggml-cpu ggml-cuda)
+endif()
+
