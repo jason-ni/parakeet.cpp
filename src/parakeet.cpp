@@ -8,7 +8,7 @@
 
 int SubSampling::tensor_count()
 {
-    return conv->tensor_count() + out->tensor_count() + 4;
+    return conv->tensor_count() + out->tensor_count() + 128;
 }
 
 void SubSampling::define_tensors(ggml_runtime::Session* session)
