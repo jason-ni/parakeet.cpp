@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
             input.tensor,
             input_audio_features.data(),
             0,
-            sizeof(float) * input_audio_features.size());
+            ggml_nbytes(input.tensor));
 
         GGMLF_LOG_DATA(input.tensor, input_audio_features.data());
     };

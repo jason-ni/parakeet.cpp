@@ -1,4 +1,5 @@
 .idea
 cmake-build*
-*.bin
 *.data
+build
+output_*.bin
